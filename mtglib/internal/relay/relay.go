@@ -4,10 +4,22 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 
 	"github.com/9seconds/mtg/v2/essentials"
-	"github.com/9seconds/mtg/v2/mtglib/internal/tls"
 )
+
+// relayBufSize is the per-pump copy buffer size. 4 KB is enough because the
+// TLS layer reassembles full records internally, so a smaller relay buffer
+// does not increase the number of syscalls.
+const relayBufSize = 4096
+
+var bufPool = sync.Pool{
+	New: func() any {
+		buf := make([]byte, relayBufSize)
+		return &buf
+	},
+}
 
 func Relay(ctx context.Context, log Logger, telegramConn, clientConn essentials.Conn) {
 	defer telegramConn.Close() //nolint: errcheck
@@ -16,11 +28,11 @@ func Relay(ctx context.Context, log Logger, telegramConn, clientConn essentials.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	go func() {
-		<-ctx.Done()
+	stopCtxCleanup := context.AfterFunc(ctx, func() {
 		telegramConn.Close() //nolint: errcheck
 		clientConn.Close()   //nolint: errcheck
-	}()
+	})
+	defer stopCtxCleanup()
 
 	closeChan := make(chan struct{})
 
@@ -36,12 +48,13 @@ func Relay(ctx context.Context, log Logger, telegramConn, clientConn essentials.
 }
 
 func pump(log Logger, src, dst essentials.Conn, direction string) int64 {
-	var buf [tls.MaxRecordPayloadSize]byte
+	bp := bufPool.Get().(*[]byte)
+	defer bufPool.Put(bp)
 
 	defer src.CloseRead()  //nolint: errcheck
 	defer dst.CloseWrite() //nolint: errcheck
 
-	n, err := io.CopyBuffer(src, dst, buf[:])
+	n, err := io.CopyBuffer(src, dst, *bp)
 
 	switch {
 	case err == nil:
