@@ -47,6 +47,7 @@ type ClientHello struct {
 type ReadClientHelloResult struct {
 	Hello        *ClientHello
 	MatchedIndex int
+	MatchedHost  string
 }
 
 func ReadClientHello(
@@ -55,7 +56,7 @@ func ReadClientHello(
 	hostname string,
 	tolerateTimeSkewness time.Duration,
 ) (*ClientHello, error) {
-	result, err := ReadClientHelloMulti(conn, [][]byte{secret}, hostname, tolerateTimeSkewness)
+	result, err := ReadClientHelloMulti(conn, [][]byte{secret}, []string{hostname}, tolerateTimeSkewness)
 	if err != nil {
 		return nil, err
 	}
@@ -65,11 +66,12 @@ func ReadClientHello(
 
 // ReadClientHelloMulti is like ReadClientHello but accepts multiple secrets.
 // It tries each secret until one validates the HMAC. On success it returns
-// the ClientHello and the index of the matched secret.
+// the ClientHello, the index of the matched secret, and the SNI hostname that
+// matched one of the allowed hostnames.
 func ReadClientHelloMulti(
 	conn net.Conn,
 	secrets [][]byte,
-	hostname string,
+	hostnames []string,
 	tolerateTimeSkewness time.Duration,
 ) (*ReadClientHelloResult, error) {
 	clientHelloCopy, handshakeReader, err := parseClientHello(conn)
@@ -87,8 +89,18 @@ func ReadClientHelloMulti(
 		return nil, fmt.Errorf("cannot parse SNI: %w", err)
 	}
 
-	if !slices.Contains(sniHostnames, hostname) {
-		return nil, fmt.Errorf("cannot find %s in %v", hostname, sniHostnames)
+	var matchedHost string
+
+	for _, h := range hostnames {
+		if slices.Contains(sniHostnames, h) {
+			matchedHost = h
+
+			break
+		}
+	}
+
+	if matchedHost == "" {
+		return nil, fmt.Errorf("cannot find any of %v in %v", hostnames, sniHostnames)
 	}
 
 	// Save the full client hello bytes so we can replay them for each secret.
@@ -122,6 +134,7 @@ func ReadClientHelloMulti(
 		return &ReadClientHelloResult{
 			Hello:        hello,
 			MatchedIndex: idx,
+			MatchedHost:  matchedHost,
 		}, nil
 	}
 

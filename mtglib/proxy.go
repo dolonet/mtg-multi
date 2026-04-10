@@ -38,9 +38,10 @@ type Proxy struct {
 	configUpdater               *dc.PublicConfigUpdater
 	doppelGanger                *doppel.Ganger
 
-	stats       *ProxyStats
-	secrets     []Secret
-	secretNames []string
+	stats          *ProxyStats
+	secrets        []Secret
+	secretNames    []string
+	secretHostnames []string
 	network         Network
 	antiReplayCache AntiReplayCache
 	blocklist       IPBlocklist
@@ -50,11 +51,14 @@ type Proxy struct {
 }
 
 // DomainFrontingAddress returns a host:port pair for a fronting domain.
-// If DomainFrontingIP is set, it is used instead of resolving the hostname.
+// If DomainFrontingIP is set, it is used instead of the hostname.
+// When secrets use different hostnames, pass the matched secret's host
+// to front the correct domain.
 func (p *Proxy) DomainFrontingAddress() string {
-	// All secrets share the same host (enforced by validation),
-	// so we use the first one.
-	host := p.secrets[0].Host
+	return p.domainFrontingAddressForHost(p.secrets[0].Host)
+}
+
+func (p *Proxy) domainFrontingAddressForHost(host string) string {
 	if p.domainFrontingIP != "" {
 		host = p.domainFrontingIP
 	}
@@ -213,19 +217,21 @@ func (p *Proxy) doFakeTLSHandshake(ctx *streamContext) bool {
 	result, err := fake.ReadClientHelloMulti(
 		rewind,
 		secretKeys,
-		p.secrets[0].Host,
+		p.secretHostnames,
 		p.tolerateTimeSkewness,
 	)
 	if err != nil {
 		p.logger.InfoError("cannot read client hello", err)
-		p.doDomainFronting(ctx, rewind)
+		p.doDomainFrontingForHost(ctx, rewind, p.secrets[0].Host)
+
 		return false
 	}
 
 	if p.antiReplayCache.SeenBefore(result.Hello.SessionID) {
 		p.logger.Warning("replay attack has been detected!")
 		p.eventStream.Send(p.ctx, NewEventReplayAttack(ctx.streamID))
-		p.doDomainFronting(ctx, rewind)
+		p.doDomainFrontingForHost(ctx, rewind, result.MatchedHost)
+
 		return false
 	}
 
@@ -326,11 +332,15 @@ func (p *Proxy) doTelegramCall(ctx *streamContext) error {
 }
 
 func (p *Proxy) doDomainFronting(ctx *streamContext, conn *connRewind) {
+	p.doDomainFrontingForHost(ctx, conn, p.secrets[0].Host)
+}
+
+func (p *Proxy) doDomainFrontingForHost(ctx *streamContext, conn *connRewind, host string) {
 	p.eventStream.Send(p.ctx, NewEventDomainFronting(ctx.streamID))
 	conn.Rewind()
 
 	nativeDialer := p.network.NativeDialer()
-	fConn, err := nativeDialer.DialContext(ctx, "tcp", p.DomainFrontingAddress())
+	fConn, err := nativeDialer.DialContext(ctx, "tcp", p.domainFrontingAddressForHost(host))
 	if err != nil {
 		p.logger.WarningError("cannot dial to the fronting domain", err)
 
@@ -390,6 +400,19 @@ func NewProxy(opts ProxyOpts) (*Proxy, error) {
 		secretsList = append(secretsList, secretsMap[name])
 	}
 
+	// Collect unique hostnames across all secrets for SNI matching.
+	hostnameSet := make(map[string]struct{}, len(secretsList))
+	for _, s := range secretsList {
+		hostnameSet[s.Host] = struct{}{}
+	}
+
+	secretHostnames := make([]string, 0, len(hostnameSet))
+	for h := range hostnameSet {
+		secretHostnames = append(secretHostnames, h)
+	}
+
+	sort.Strings(secretHostnames)
+
 	stats := NewProxyStats()
 	for _, name := range secretNames {
 		stats.PreRegister(name)
@@ -410,6 +433,7 @@ func NewProxy(opts ProxyOpts) (*Proxy, error) {
 		stats:                    stats,
 		secrets:                  secretsList,
 		secretNames:              secretNames,
+		secretHostnames:          secretHostnames,
 		network:                  opts.Network,
 		antiReplayCache:          opts.AntiReplayCache,
 		blocklist:                opts.IPBlocklist,

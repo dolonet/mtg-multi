@@ -8,7 +8,7 @@ Fork of [9seconds/mtg](https://github.com/9seconds/mtg) with multi-secret suppor
 
 ## What's different
 
-**Multiple secrets.** Upstream mtg allows only one secret per instance. mtg-multi lets you define named secrets in the config — one per user. All secrets must share the same hostname.
+**Multiple secrets.** Upstream mtg allows only one secret per instance. mtg-multi lets you define named secrets in the config — one per user. Secrets may use different hostnames for per-user domain fronting.
 
 ```toml
 [secrets]
@@ -118,7 +118,7 @@ See [example.config.toml](example.config.toml) for all available options.
 
 ## Чем отличается
 
-**Несколько секретов.** В оригинальном mtg — один секрет на инстанс. mtg-multi позволяет задать именованные секреты в конфиге, по одному на пользователя. Все секреты должны использовать один и тот же hostname.
+**Несколько секретов.** В оригинальном mtg — один секрет на инстанс. mtg-multi позволяет задать именованные секреты в конфиге, по одному на пользователя. Секреты могут использовать разные hostname для per-user domain fronting.
 
 ```toml
 [secrets]

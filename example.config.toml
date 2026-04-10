@@ -113,7 +113,7 @@ allow-fallback-on-unknown-dc = false
 
 # For multi-user support, use the [secrets] section instead of "secret".
 # Each key is a user name, used for per-user stats tracking.
-# All secrets must use the same hostname.
+# Secrets may use different hostnames for per-user domain fronting.
 #
 # IMPORTANT: [secrets] must appear after all global keys (like bind-to,
 # api-bind-to) — in TOML, keys after a [section] belong to that table.
