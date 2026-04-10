@@ -13,7 +13,7 @@ type tomlConfig struct {
 	AllowFallbackOnUnknownDC    bool   `toml:"allow-fallback-on-unknown-dc" json:"allowFallbackOnUnknownDc,omitempty"`
 	Secret                      string            `toml:"secret" json:"secret,omitempty"`
 	Secrets                     map[string]string `toml:"secrets" json:"secrets,omitempty"`
-	BindTo                      string            `toml:"bind-to" json:"bindTo"`
+	BindTo                      any               `toml:"bind-to" json:"bindTo"`
 	ProxyProtocolListener       bool   `toml:"proxy-protocol-listener" json:"proxyProtocolListener"`
 	PreferIP                    string `toml:"prefer-ip" json:"preferIp,omitempty"`
 	AutoUpdate                  bool   `toml:"auto-update" json:"autoUpdate,omitempty"`
@@ -105,12 +105,36 @@ func Parse(rawData []byte) (*Config, error) {
 		return nil, fmt.Errorf("cannot parse toml config: %w", err)
 	}
 
+	switch v := tomlConf.BindTo.(type) {
+	case string:
+		if v != "" {
+			tomlConf.BindTo = []string{v}
+		}
+	case []any:
+		strs := make([]string, len(v))
+
+		for i, s := range v {
+			str, ok := s.(string)
+			if !ok {
+				return nil, fmt.Errorf("bind-to array elements must be strings")
+			}
+
+			strs[i] = str
+		}
+
+		tomlConf.BindTo = strs
+	}
+
 	if err := jsonEncoder.Encode(tomlConf); err != nil {
 		panic(err)
 	}
 
 	if err := json.NewDecoder(jsonBuf).Decode(conf); err != nil {
 		return nil, fmt.Errorf("cannot parse a config: %w", err)
+	}
+
+	if len(conf.BindTo) == 0 {
+		return nil, fmt.Errorf("bind-to is required")
 	}
 
 	return conf, nil

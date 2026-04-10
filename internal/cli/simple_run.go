@@ -28,9 +28,13 @@ type SimpleRun struct {
 func (s *SimpleRun) Run(cli *CLI, version string) error { //nolint: cyclop,funlen
 	conf := &config.Config{}
 
-	if err := conf.BindTo.Set(s.BindTo); err != nil {
+	var bindHP config.TypeHostPort
+
+	if err := bindHP.Set(s.BindTo); err != nil {
 		return fmt.Errorf("incorrect bind-to parameter: %w", err)
 	}
+
+	conf.BindTo = []config.TypeHostPort{bindHP}
 
 	if err := conf.Secret.Set(s.Secret); err != nil {
 		return fmt.Errorf("incorrect secret: %w", err)

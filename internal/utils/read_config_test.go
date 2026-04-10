@@ -20,7 +20,8 @@ func (suite *ReadConfigTestSuite) TestReadMinimal() {
 	conf, err := utils.ReadConfig(suite.GetConfigPath("minimal.toml"))
 	suite.NoError(err)
 	suite.NoError(conf.Validate())
-	suite.Equal("0.0.0.0:80", conf.BindTo.Get(""))
+	suite.Require().Len(conf.BindTo, 1)
+	suite.Equal("0.0.0.0:80", conf.BindTo[0].Get(""))
 	suite.Equal("7mqFMMq3P2Tvvt_rPx5qhmFnb29nbGUuY29t", conf.Secret.Base64())
 }
 

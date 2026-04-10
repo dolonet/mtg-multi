@@ -288,9 +288,28 @@ func runProxy(conf *config.Config, version string) error { //nolint: funlen
 		return fmt.Errorf("cannot create a proxy: %w", err)
 	}
 
-	listener, err := utils.NewListener(conf.BindTo.Get(""), 0)
-	if err != nil {
-		return fmt.Errorf("cannot start proxy: %w", err)
+	bindAddrs := conf.GetBindAddrs()
+	listeners := make([]net.Listener, 0, len(bindAddrs))
+
+	for _, addr := range bindAddrs {
+		l, err := utils.NewListener(addr, 0)
+		if err != nil {
+			for _, prev := range listeners {
+				prev.Close() //nolint: errcheck
+			}
+
+			return fmt.Errorf("cannot start proxy on %s: %w", addr, err)
+		}
+
+		listeners = append(listeners, l)
+	}
+
+	var listener net.Listener
+
+	if len(listeners) == 1 {
+		listener = listeners[0]
+	} else {
+		listener = utils.NewMultiListener(listeners...)
 	}
 
 	if conf.ProxyProtocolListener.Get(false) {

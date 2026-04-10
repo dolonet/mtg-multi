@@ -39,7 +39,30 @@ func (suite *ConfigTestSuite) TestParseMinimalConfig() {
 	conf, err := config.Parse(suite.ReadConfig("minimal.toml"))
 	suite.NoError(err)
 	suite.Equal("7oe1GqLy6TBc38CV3jx7q09nb29nbGUuY29t", conf.Secret.Base64())
-	suite.Equal("0.0.0.0:3128", conf.BindTo.String())
+	suite.Require().Len(conf.BindTo, 1)
+	suite.Equal("0.0.0.0:3128", conf.BindTo[0].Get(""))
+}
+
+func (suite *ConfigTestSuite) TestParseMultiBind() {
+	conf, err := config.Parse(suite.ReadConfig("multi_bind.toml"))
+	suite.NoError(err)
+	suite.Require().Len(conf.BindTo, 2)
+	suite.Equal("127.0.0.1:443", conf.BindTo[0].Get(""))
+	suite.Equal("[::1]:443", conf.BindTo[1].Get(""))
+}
+
+func (suite *ConfigTestSuite) TestMultiBindGetAddrs() {
+	conf, err := config.Parse(suite.ReadConfig("multi_bind.toml"))
+	suite.NoError(err)
+
+	addrs := conf.GetBindAddrs()
+	suite.Equal([]string{"127.0.0.1:443", "[::1]:443"}, addrs)
+}
+
+func (suite *ConfigTestSuite) TestMultiBindGetFirstPort() {
+	conf, err := config.Parse(suite.ReadConfig("multi_bind.toml"))
+	suite.NoError(err)
+	suite.Equal(uint(443), conf.GetFirstBindPort())
 }
 
 func (suite *ConfigTestSuite) TestParsePublicIP() {

@@ -138,7 +138,7 @@ func (a *Access) makeURLs(conf *config.Config, ip net.IP) *accessResponseURLs {
 
 	portNo := a.Port
 	if portNo == 0 {
-		portNo = conf.BindTo.Port
+		portNo = conf.GetFirstBindPort()
 	}
 
 	values := url.Values{}

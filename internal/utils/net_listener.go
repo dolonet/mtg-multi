@@ -36,3 +36,59 @@ func NewListener(bindTo string, bufferSize int) (net.Listener, error) {
 		Listener: base,
 	}, nil
 }
+
+type acceptResult struct {
+	conn net.Conn
+	err  error
+}
+
+// MultiListener fans-in Accept calls from multiple underlying listeners.
+type MultiListener struct {
+	listeners []net.Listener
+	connCh    chan acceptResult
+}
+
+func NewMultiListener(listeners ...net.Listener) *MultiListener {
+	ml := &MultiListener{
+		listeners: listeners,
+		connCh:    make(chan acceptResult),
+	}
+
+	for _, l := range listeners {
+		go ml.acceptLoop(l)
+	}
+
+	return ml
+}
+
+func (ml *MultiListener) acceptLoop(l net.Listener) {
+	for {
+		conn, err := l.Accept()
+		ml.connCh <- acceptResult{conn: conn, err: err}
+
+		if err != nil {
+			return
+		}
+	}
+}
+
+func (ml *MultiListener) Accept() (net.Conn, error) {
+	r := <-ml.connCh
+	return r.conn, r.err
+}
+
+func (ml *MultiListener) Close() error {
+	var firstErr error
+
+	for _, l := range ml.listeners {
+		if err := l.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	return firstErr
+}
+
+func (ml *MultiListener) Addr() net.Addr {
+	return ml.listeners[0].Addr()
+}
