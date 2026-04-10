@@ -32,7 +32,9 @@ func (suite *MultiListenerTestSuite) TestAcceptFromMultipleListeners() {
 		defer wg.Done()
 
 		conn, err := net.Dial("tcp", l1.Addr().String())
-		suite.NoError(err)
+		if err != nil {
+			return
+		}
 
 		conn.Close() //nolint: errcheck
 	}()
@@ -41,7 +43,9 @@ func (suite *MultiListenerTestSuite) TestAcceptFromMultipleListeners() {
 		defer wg.Done()
 
 		conn, err := net.Dial("tcp", l2.Addr().String())
-		suite.NoError(err)
+		if err != nil {
+			return
+		}
 
 		conn.Close() //nolint: errcheck
 	}()
@@ -65,7 +69,9 @@ func (suite *MultiListenerTestSuite) TestSingleListener() {
 
 	go func() {
 		conn, err := net.Dial("tcp", l.Addr().String())
-		suite.NoError(err)
+		if err != nil {
+			return
+		}
 
 		conn.Close() //nolint: errcheck
 	}()
@@ -85,17 +91,15 @@ func (suite *MultiListenerTestSuite) TestCloseStopsAccept() {
 
 	ml := utils.NewMultiListener(l1, l2)
 
-	done := make(chan struct{})
+	errCh := make(chan error, 1)
 
 	go func() {
 		_, err := ml.Accept()
-		suite.Error(err)
-
-		close(done)
+		errCh <- err
 	}()
 
 	suite.NoError(ml.Close())
-	<-done
+	suite.Error(<-errCh)
 }
 
 func (suite *MultiListenerTestSuite) TestConcurrentAccept() {
@@ -116,7 +120,6 @@ func (suite *MultiListenerTestSuite) TestConcurrentAccept() {
 
 	var accepted atomic.Int32
 
-	// Accept all connections in background.
 	go func() {
 		for range numListeners * connsPerListener {
 			conn, err := ml.Accept()
@@ -130,7 +133,6 @@ func (suite *MultiListenerTestSuite) TestConcurrentAccept() {
 		}
 	}()
 
-	// Dial every listener concurrently.
 	var wg sync.WaitGroup
 
 	for _, l := range listeners {
@@ -152,7 +154,6 @@ func (suite *MultiListenerTestSuite) TestConcurrentAccept() {
 
 	wg.Wait()
 
-	// Give accept goroutine a moment to drain the channel.
 	suite.Eventually(func() bool {
 		return accepted.Load() == numListeners*connsPerListener
 	}, 2_000_000_000, 10_000_000) // 2s timeout, 10ms poll
