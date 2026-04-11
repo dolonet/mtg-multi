@@ -35,6 +35,7 @@ COPY . /app
 RUN set -x \
   && version="$(git describe --exact-match HEAD 2>/dev/null || git describe --tags --always 2>/dev/null || echo dev)" \
   && go build \
+      -o mtg \
       -trimpath \
       -mod=readonly \
       -ldflags="-extldflags '-static' -s -w -X 'main.version=$version'" \
