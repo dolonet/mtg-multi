@@ -31,7 +31,7 @@ services:
     sysctls:
       - net.ipv4.ip_unprivileged_port_start=80
     networks:
-      sni:
+      - sni
 
   mtg:
     image: nineseconds/mtg:2
@@ -43,7 +43,7 @@ services:
     extra_hosts:
       - "host.containers.internal:host-gateway"
     networks:
-      sni:
+      - sni
 
   web:
     image: caddy:alpine
