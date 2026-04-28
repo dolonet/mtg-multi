@@ -67,6 +67,13 @@ In this setup that hostname resolves back to **this** server, so mtg's
 fronting dial would hit HAProxy on `:443`, HAProxy would see the SNI
 matching the secret and route the connection back to mtg → loop.
 
+The trigger is DNS, not name equality: the loop reproduces whenever
+the secret's hostname resolves to this host, regardless of how it
+relates to the domain Caddy serves (same name, subdomain, parent, or
+unrelated).  In an SNI-router deployment the secret's hostname has to
+point here for clients to reach mtg in the first place, so the loop
+is the default state unless mtg is steered away from HAProxy.
+
 To break the loop, `mtg-config.toml` pins the fronting target to
 Caddy's container address directly:
 
