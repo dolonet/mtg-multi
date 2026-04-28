@@ -116,10 +116,10 @@ allow-fallback-on-unknown-dc = false
 # back to this server (e.g. mtg sits behind an SNI router whose DNS points
 # at itself), override the destination here.
 #
-# Use `host` for a hostname (resolved at dial time, so a dual-stack DNS
-# record can reach the right backend address family for IPv4 or IPv6
-# clients) or for a literal IP. Use `ip` if you specifically need a
-# literal IP and want strict IP validation. Setting both is an error.
+# Use `host` — accepts a hostname or a literal IP. Hostnames are resolved
+# at dial time, so a dual-stack DNS record can reach the right backend
+# address family for IPv4 or IPv6 clients. `ip` is kept for backward
+# compatibility (literal IP only). Setting both is an error.
 #
 # The hostname from the secret is still used for SNI in the TLS handshake.
 #

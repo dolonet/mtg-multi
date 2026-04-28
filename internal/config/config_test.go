@@ -74,15 +74,34 @@ func (suite *ConfigTestSuite) TestString() {
 	suite.NotEmpty(conf.String())
 }
 
-func (suite *ConfigTestSuite) TestDomainFrontingHostOrIP() {
+func (suite *ConfigTestSuite) TestDomainFrontingHostAndIPMutuallyExclusive() {
 	conf, err := config.Parse(suite.ReadConfig("minimal.toml"))
 	suite.NoError(err)
 
 	suite.NoError(conf.DomainFronting.Host.Set("fronting-backend"))
 	suite.NoError(conf.DomainFronting.IP.Set("10.0.0.10"))
 	suite.Error(conf.Validate())
+}
 
-	suite.Equal("fronting-backend", conf.GetDomainFrontingIP(nil))
+func (suite *ConfigTestSuite) TestDomainFrontingHostFromTOML() {
+	conf, err := config.Parse(suite.ReadConfig("domain_fronting_host.toml"))
+	suite.NoError(err)
+	suite.NoError(conf.Validate())
+	suite.Equal("fronting-backend", conf.GetDomainFrontingHost())
+}
+
+func (suite *ConfigTestSuite) TestDomainFrontingIPFromTOML() {
+	conf, err := config.Parse(suite.ReadConfig("domain_fronting_ip.toml"))
+	suite.NoError(err)
+	suite.NoError(conf.Validate())
+	suite.Equal("10.0.0.10", conf.GetDomainFrontingHost())
+}
+
+func (suite *ConfigTestSuite) TestDomainFrontingNotSet() {
+	conf, err := config.Parse(suite.ReadConfig("minimal.toml"))
+	suite.NoError(err)
+	suite.NoError(conf.Validate())
+	suite.Equal("", conf.GetDomainFrontingHost())
 }
 
 func TestConfig(t *testing.T) {

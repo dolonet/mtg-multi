@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/url"
 
 	"github.com/9seconds/mtg/v2/mtglib"
@@ -118,14 +117,14 @@ func (c *Config) GetDomainFrontingPort(defaultValue uint) uint {
 	return c.DomainFrontingPort.Get(defaultValue)
 }
 
-func (c *Config) GetDomainFrontingIP(defaultValue net.IP) string {
+func (c *Config) GetDomainFrontingHost() string {
 	if host := c.DomainFronting.Host.Get(""); host != "" {
 		return host
 	}
 	if ip := c.DomainFronting.IP.Get(nil); ip != nil {
 		return ip.String()
 	}
-	if ip := c.DomainFrontingIP.Get(defaultValue); ip != nil {
+	if ip := c.DomainFrontingIP.Get(nil); ip != nil {
 		return ip.String()
 	}
 	return ""

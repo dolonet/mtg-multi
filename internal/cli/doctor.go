@@ -298,8 +298,8 @@ func (d *Doctor) checkNetworkAddresses(ntw mtglib.Network, addresses []string) e
 
 func (d *Doctor) checkFrontingDomain(ntw mtglib.Network) bool {
 	host := d.conf.Secret.Host
-	if ip := d.conf.GetDomainFrontingIP(nil); ip != "" {
-		host = ip
+	if override := d.conf.GetDomainFrontingHost(); override != "" {
+		host = override
 	}
 
 	port := d.conf.GetDomainFrontingPort(mtglib.DefaultDomainFrontingPort)
