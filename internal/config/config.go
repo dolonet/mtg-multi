@@ -37,8 +37,8 @@ type Config struct {
 	PublicIPv4                  TypeIP          `json:"publicIpv4"`
 	PublicIPv6                  TypeIP          `json:"publicIpv6"`
 	DomainFronting              struct {
-		IP            TypeIP   `json:"ip"`
 		Host          TypeHost `json:"host"`
+		IP            TypeIP   `json:"ip"`
 		Port          TypePort `json:"port"`
 		ProxyProtocol TypeBool `json:"proxyProtocol"`
 	} `json:"domainFronting"`

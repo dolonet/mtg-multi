@@ -90,6 +90,13 @@ func (suite *ConfigTestSuite) TestDomainFrontingHostFromTOML() {
 	suite.Equal("fronting-backend", conf.GetDomainFrontingHost())
 }
 
+func (suite *ConfigTestSuite) TestDomainFrontingHostAcceptsLiteralIP() {
+	conf, err := config.Parse(suite.ReadConfig("domain_fronting_host_ip.toml"))
+	suite.NoError(err)
+	suite.NoError(conf.Validate())
+	suite.Equal("10.0.0.1", conf.GetDomainFrontingHost())
+}
+
 func (suite *ConfigTestSuite) TestDomainFrontingIPFromTOML() {
 	conf, err := config.Parse(suite.ReadConfig("domain_fronting_ip.toml"))
 	suite.NoError(err)

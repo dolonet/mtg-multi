@@ -30,7 +30,7 @@ type Proxy struct {
 	idleTimeout                 time.Duration
 	handshakeTimeout            time.Duration
 	domainFrontingPort          int
-	domainFrontingIP            string
+	domainFrontingHost          string
 	domainFrontingProxyProtocol bool
 	workerPool                  *ants.PoolWithFunc
 	telegram                    *dc.Telegram
@@ -48,11 +48,12 @@ type Proxy struct {
 }
 
 // DomainFrontingAddress returns a host:port pair for a fronting domain.
-// If DomainFrontingIP is set, it is used instead of resolving the hostname.
+// If a fronting host (literal IP or hostname) is configured, it is used
+// instead of resolving the secret's hostname.
 func (p *Proxy) DomainFrontingAddress() string {
 	host := p.secret.Host
-	if p.domainFrontingIP != "" {
-		host = p.domainFrontingIP
+	if p.domainFrontingHost != "" {
+		host = p.domainFrontingHost
 	}
 
 	return net.JoinHostPort(host, strconv.Itoa(p.domainFrontingPort))
@@ -354,7 +355,7 @@ func NewProxy(opts ProxyOpts) (*Proxy, error) {
 		eventStream:              opts.EventStream,
 		logger:                   logger,
 		domainFrontingPort:       opts.getDomainFrontingPort(),
-		domainFrontingIP:         opts.DomainFrontingIP,
+		domainFrontingHost:       opts.DomainFrontingIP,
 		tolerateTimeSkewness:     opts.getTolerateTimeSkewness(),
 		idleTimeout:              opts.getIdleTimeout(),
 		handshakeTimeout:         opts.getHandshakeTimeout(),
