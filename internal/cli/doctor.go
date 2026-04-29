@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
@@ -220,18 +221,29 @@ func (d *Doctor) checkNetwork(ntw mtglib.Network) bool {
 	dcs := slices.Collect(maps.Keys(essentials.TelegramCoreAddresses))
 	slices.Sort(dcs)
 
+	errs := make([]error, len(dcs))
+
+	var wg sync.WaitGroup
+	for i, dc := range dcs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = d.checkNetworkAddresses(ntw, essentials.TelegramCoreAddresses[dc])
+		}()
+	}
+	wg.Wait()
+
 	ok := true
 
-	for _, dc := range dcs {
-		err := d.checkNetworkAddresses(ntw, essentials.TelegramCoreAddresses[dc])
-		if err == nil {
+	for i, dc := range dcs {
+		if errs[i] == nil {
 			tplODCConnect.Execute(os.Stdout, map[string]any{ //nolint: errcheck
 				"dc": dc,
 			})
 		} else {
 			tplEDCConnect.Execute(os.Stdout, map[string]any{ //nolint: errcheck
 				"dc":    dc,
-				"error": err,
+				"error": errs[i],
 			})
 			ok = false
 		}
