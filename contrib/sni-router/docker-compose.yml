@@ -23,16 +23,18 @@ services:
       - "443:443"
       - "80:80"
     volumes:
-      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro,Z
     depends_on:
       - mtg
       - web
     restart: unless-stopped
+    sysctls:
+      - net.ipv4.ip_unprivileged_port_start=80
 
   mtg:
     image: nineseconds/mtg:2
     volumes:
-      - ./mtg-config.toml:/config/config.toml:ro
+      - ./mtg-config.toml:/config/config.toml:ro,Z
     expose:
       - "3128"
     restart: unless-stopped
@@ -40,9 +42,9 @@ services:
   web:
     image: caddy:alpine
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro,Z
       - caddy_data:/data
-      - ./www:/srv:ro
+      - ./www:/srv:ro,Z
     expose:
       - "80"
       - "8443"
