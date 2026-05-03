@@ -36,6 +36,8 @@ services:
     expose:
       - "3128"
     restart: unless-stopped
+    extra_hosts:
+      - "host.containers.internal:host-gateway"
 
   web:
     image: caddy:alpine
