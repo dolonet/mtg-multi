@@ -384,9 +384,14 @@ files.
 
 ### Prepare a configuration file
 
-Please checkout an example configuration file. All options except of
-`secret` and `bind-to` are optional. You can safely have this minimal
-configuration file:
+mtg is configured via a [TOML](https://toml.io/en/) file. The full
+reference is [`example.config.toml`](./example.config.toml) in this
+repository — every option is listed there with its default value and
+an inline comment explaining what it does. Treat that file as the
+configuration documentation.
+
+All options except `secret` and `bind-to` are optional, so the minimal
+working configuration is:
 
 ```toml
 secret = "ee473ce5d4958eb5f968c87680a23854a0676f6f676c652e636f6d"
@@ -395,8 +400,6 @@ bind-to = "0.0.0.0:443"
 
 This is enough to run the whole application. All other
 options already have sensible defaults for the app at almost any scale.
-
-Oh, the configuration is done in [TOML format](https://toml.io/en/).
 
 ### Run a proxy
 
@@ -467,8 +470,8 @@ $ docker exec mtg-proxy /mtg access /config.toml
 
 ## Doppelganger
 
-mtg can mimic real websites, please take a look at relevant section in example
-config file.
+mtg can mimic real websites — see the `[defense.doppelganger]` section
+in [`example.config.toml`](./example.config.toml).
 
 mtg comes with some very good precollected statistics coming from
 [ok.ru](https://ok.ru/). It does not mean that you have to cover yourself
@@ -562,8 +565,9 @@ There are three ways to resolve it:
 
 Out of the box, mtg works with
 [statsd](https://github.com/statsd/statsd) and
-[Prometheus](https://prometheus.io/). Please check configuration file
-example to get how to set this integration up.
+[Prometheus](https://prometheus.io/). See the `[stats.statsd]` and
+`[stats.prometheus]` sections in
+[`example.config.toml`](./example.config.toml) for setup.
 
 Here goes a list of metrics with their types but without a prefix.
 
