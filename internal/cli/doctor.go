@@ -18,6 +18,7 @@ import (
 	"github.com/9seconds/mtg/v2/internal/config"
 	"github.com/9seconds/mtg/v2/internal/utils"
 	"github.com/9seconds/mtg/v2/mtglib"
+	"github.com/9seconds/mtg/v2/mtglib/dcprobe"
 	"github.com/9seconds/mtg/v2/network/v2"
 	"github.com/beevik/ntp"
 )
@@ -46,7 +47,7 @@ var (
 	)
 
 	tplODCConnect = template.Must(
-		template.New("").Parse("  ✅ DC {{ .dc }}\n"),
+		template.New("").Parse("  ✅ DC {{ .dc }} (rpc {{ .rtt }})\n"),
 	)
 	tplEDCConnect = template.Must(
 		template.New("").Parse("  ❌ DC {{ .dc }}: {{ .error }}\n"),
@@ -237,17 +238,21 @@ func (d *Doctor) checkNetwork(ntw mtglib.Network) bool {
 	dcs := slices.Collect(maps.Keys(essentials.TelegramCoreAddresses))
 	slices.Sort(dcs)
 
-	errs := make([]error, len(dcs))
+	type dcResult struct {
+		rtt time.Duration
+		err error
+	}
+	results := make([]dcResult, len(dcs))
 
 	var wg sync.WaitGroup
 	for i, dc := range dcs {
 		wg.Go(func() {
 			defer func() {
 				if r := recover(); r != nil {
-					errs[i] = fmt.Errorf("panic: %v", r)
+					results[i].err = fmt.Errorf("panic: %v", r)
 				}
 			}()
-			errs[i] = d.checkNetworkAddresses(ntw, essentials.TelegramCoreAddresses[dc])
+			results[i].rtt, results[i].err = d.checkNetworkAddresses(ntw, dc, essentials.TelegramCoreAddresses[dc])
 		})
 	}
 	wg.Wait()
@@ -255,14 +260,15 @@ func (d *Doctor) checkNetwork(ntw mtglib.Network) bool {
 	ok := true
 
 	for i, dc := range dcs {
-		if errs[i] == nil {
+		if results[i].err == nil {
 			tplODCConnect.Execute(os.Stdout, map[string]any{ //nolint: errcheck
-				"dc": dc,
+				"dc":  dc,
+				"rtt": results[i].rtt.Round(time.Microsecond),
 			})
 		} else {
 			tplEDCConnect.Execute(os.Stdout, map[string]any{ //nolint: errcheck
 				"dc":    dc,
-				"error": errs[i],
+				"error": results[i].err,
 			})
 			ok = false
 		}
@@ -271,7 +277,7 @@ func (d *Doctor) checkNetwork(ntw mtglib.Network) bool {
 	return ok
 }
 
-func (d *Doctor) checkNetworkAddresses(ntw mtglib.Network, addresses []string) error {
+func (d *Doctor) checkNetworkAddresses(ntw mtglib.Network, dc int, addresses []string) (time.Duration, error) {
 	checkAddresses := []string{}
 
 	switch d.conf.PreferIP.Get("prefer-ip4") {
@@ -302,29 +308,33 @@ func (d *Doctor) checkNetworkAddresses(ntw mtglib.Network, addresses []string) e
 	}
 
 	if len(checkAddresses) == 0 {
-		return fmt.Errorf("no suitable addresses after IP version filtering")
+		return 0, fmt.Errorf("no suitable addresses after IP version filtering")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	var (
-		conn net.Conn
-		err  error
-	)
+	var lastErr error
 
 	for _, addr := range checkAddresses {
-		conn, err = ntw.DialContext(ctx, "tcp", addr)
+		conn, err := ntw.DialContext(ctx, "tcp", addr)
 		if err != nil {
+			lastErr = fmt.Errorf("tcp connect to %s: %w", addr, err)
 			continue
 		}
 
+		rtt, err := dcprobe.Probe(ctx, conn, dc)
 		conn.Close() //nolint: errcheck
 
-		return nil
+		if err != nil {
+			lastErr = fmt.Errorf("rpc handshake to %s: %w", addr, err)
+			continue
+		}
+
+		return rtt, nil
 	}
 
-	return err
+	return 0, lastErr
 }
 
 func (d *Doctor) checkFrontingDomain(ntw mtglib.Network) bool {
