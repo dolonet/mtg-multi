@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"time"
 
 	"github.com/9seconds/mtg/v2/essentials"
@@ -35,21 +36,27 @@ const (
 	ctorReqPQMulti uint32 = 0xbe7e8ef1
 	ctorResPQ      uint32 = 0x05162463
 
-	// Sanity bound for the resPQ frame. Real replies are ~64 bytes;
-	// 4 KiB is generous and keeps a hostile peer from making us allocate.
-	maxResPQFrame = 4096
+	// Minimum legal resPQ frame: 20-byte unencrypted-message envelope +
+	// 4-byte ctor + 16-byte nonce echo. Anything below cannot be a resPQ.
+	minResPQFrame = 20 + 4 + 16
+	// Upper bound: real resPQ replies are ~84 bytes (envelope + ~64-byte
+	// payload). 256 is comfortable headroom; anything beyond is hostile or
+	// not Telegram.
+	maxResPQFrame = 256
 )
 
 // Probe sends req_pq_multi over an obfuscated2 + padded-intermediate transport
 // and verifies that the peer replies with a matching resPQ.
 //
-// conn must be a freshly opened TCP connection to a Telegram DC. Probe does
-// NOT close it — the caller does. dc is the DC number (1..5) that gets baked
-// into the obfuscated2 handshake frame.
+// conn must be a freshly opened reliable byte stream (typically TCP) to a
+// Telegram DC, but a SOCKS/proxy-wrapped net.Conn works just as well — Probe
+// adapts whatever it gets to the half-close interface mtg's obfuscator
+// requires. Probe does NOT close conn — the caller does. dc is the DC number
+// (1..5) that gets baked into the obfuscated2 handshake frame.
 //
 // The returned duration is the round-trip from "first byte sent after the
 // obfs handshake" to "resPQ frame fully read".
-func Probe(ctx context.Context, conn essentials.Conn, dc int) (time.Duration, error) {
+func Probe(ctx context.Context, conn net.Conn, dc int) (time.Duration, error) {
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
 		defer func() { _ = conn.SetDeadline(time.Time{}) }()
@@ -57,7 +64,7 @@ func Probe(ctx context.Context, conn essentials.Conn, dc int) (time.Duration, er
 
 	// 1. obfuscated2 handshake. Empty Secret = no MTProxy secret mixing,
 	// which is how mtg itself talks to a DC (see mtglib/proxy.go).
-	obfsConn, err := obfuscation.Obfuscator{}.SendHandshake(conn, dc)
+	obfsConn, err := obfuscation.Obfuscator{}.SendHandshake(adaptConn(conn), dc)
 	if err != nil {
 		return 0, fmt.Errorf("obfuscated2 handshake: %w", err)
 	}
@@ -100,7 +107,7 @@ func Probe(ctx context.Context, conn essentials.Conn, dc int) (time.Duration, er
 		return 0, fmt.Errorf("read frame length: %w", err)
 	}
 	respLen := binary.LittleEndian.Uint32(lenBuf[:])
-	if respLen < 20+4+16 {
+	if respLen < minResPQFrame {
 		return 0, fmt.Errorf("%w: resPQ frame too short (%d bytes)", ErrNotTelegram, respLen)
 	}
 	if respLen > maxResPQFrame {
@@ -146,3 +153,19 @@ func generateMessageID() uint64 {
 // "the TCP connection was OK but the peer is not a Telegram DC" from
 // transport errors.
 var ErrNotTelegram = errors.New("peer did not respond with a matching resPQ")
+
+// adaptConn returns conn as essentials.Conn if it already satisfies the
+// interface (typically *net.TCPConn), otherwise wraps it with no-op
+// CloseRead/CloseWrite. mtg's obfuscator only ever calls Read/Write/Close,
+// so the no-ops are safe.
+func adaptConn(conn net.Conn) essentials.Conn {
+	if ec, ok := conn.(essentials.Conn); ok {
+		return ec
+	}
+	return halfCloseShim{Conn: conn}
+}
+
+type halfCloseShim struct{ net.Conn }
+
+func (halfCloseShim) CloseRead() error  { return nil }
+func (halfCloseShim) CloseWrite() error { return nil }

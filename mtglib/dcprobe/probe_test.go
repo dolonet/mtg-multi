@@ -3,12 +3,12 @@ package dcprobe_test
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"testing"
 	"time"
 
-	"github.com/9seconds/mtg/v2/essentials"
 	"github.com/9seconds/mtg/v2/mtglib/dcprobe"
 )
 
@@ -38,17 +38,11 @@ func TestProbeAgainstTelegramDCs(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 
-			d := net.Dialer{}
-			rawConn, err := d.DialContext(ctx, "tcp", tc.addr)
+			conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", tc.addr)
 			if err != nil {
 				t.Fatalf("dial: %v", err)
 			}
-			defer rawConn.Close() //nolint: errcheck
-
-			conn, ok := rawConn.(essentials.Conn)
-			if !ok {
-				t.Fatalf("dialed conn does not satisfy essentials.Conn (type %T)", rawConn)
-			}
+			t.Cleanup(func() { _ = conn.Close() })
 
 			rtt, err := dcprobe.Probe(ctx, conn, tc.dc)
 			if err != nil {
@@ -59,40 +53,58 @@ func TestProbeAgainstTelegramDCs(t *testing.T) {
 	}
 }
 
-// TestErrNotTelegramOnRandomService dials something that is not a Telegram DC
-// and confirms the probe rejects it via ErrNotTelegram (or a network error).
-// Opt-in: requires MTG_PROBE_NETWORK=1 and MTG_PROBE_FAKE_TARGET set to
-// "host:port" of a TCP service that is NOT a Telegram DC (e.g. a local
-// nginx on :443).
-func TestErrNotTelegramOnRandomService(t *testing.T) {
-	if os.Getenv("MTG_PROBE_NETWORK") != "1" {
-		t.Skip("skipping network probe (set MTG_PROBE_NETWORK=1 to enable)")
+// TestProbeRejectsMisbehavingPeer connects to an in-process listener that
+// accepts the obfs2 handshake, then writes back arbitrary bytes. With
+// overwhelming probability the decrypted reply fails one of: frame-length
+// bounds, resPQ constructor, or nonce echo. All three paths wrap
+// ErrNotTelegram, so we assert errors.Is.
+func TestProbeRejectsMisbehavingPeer(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = ln.Close() })
 
-	target := os.Getenv("MTG_PROBE_FAKE_TARGET")
-	if target == "" {
-		t.Skip("set MTG_PROBE_FAKE_TARGET=host:port to a non-Telegram listener")
-	}
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close() //nolint: errcheck
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		// Discard the 64-byte obfs2 handshake the client sends.
+		var hs [64]byte
+		if _, err := io.ReadFull(c, hs[:]); err != nil {
+			return
+		}
+		// Write enough garbage to satisfy any plausible respLen the client
+		// might decode (we cap at maxResPQFrame=256 in probe.go). Whatever
+		// the client decrypts will fail constructor or nonce verification.
+		junk := make([]byte, 512)
+		for i := range junk {
+			junk[i] = byte(i)
+		}
+		_, _ = c.Write(junk)
+		// Keep the conn open until the client closes it (avoids racing the
+		// client's read against our close).
+		_, _ = io.Copy(io.Discard, c)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	d := net.Dialer{}
-	rawConn, err := d.DialContext(ctx, "tcp", target)
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", ln.Addr().String())
 	if err != nil {
-		t.Fatalf("dial fake target: %v", err)
+		t.Fatal(err)
 	}
-	defer rawConn.Close() //nolint: errcheck
-
-	conn, ok := rawConn.(essentials.Conn)
-	if !ok {
-		t.Fatalf("dialed conn does not satisfy essentials.Conn (type %T)", rawConn)
-	}
+	t.Cleanup(func() { _ = conn.Close() })
 
 	_, err = dcprobe.Probe(ctx, conn, 2)
 	if err == nil {
-		t.Fatalf("expected probe failure against %s, got nil", target)
+		t.Fatal("expected ErrNotTelegram, got nil")
 	}
-	t.Logf("probe vs %s: %v (errors.Is(ErrNotTelegram)=%v)",
-		target, err, errors.Is(err, dcprobe.ErrNotTelegram))
+	if !errors.Is(err, dcprobe.ErrNotTelegram) {
+		t.Fatalf("expected errors.Is(err, ErrNotTelegram) to be true, got: %v", err)
+	}
+	t.Logf("rejected: %v", err)
 }
