@@ -12,7 +12,7 @@ import (
 	"github.com/9seconds/mtg/v2/essentials"
 	"github.com/9seconds/mtg/v2/mtglib/internal/dc"
 	"github.com/9seconds/mtg/v2/mtglib/internal/doppel"
-	"github.com/9seconds/mtg/v2/mtglib/internal/obfuscation"
+	"github.com/9seconds/mtg/v2/mtglib/obfuscation"
 	"github.com/9seconds/mtg/v2/mtglib/internal/relay"
 	"github.com/9seconds/mtg/v2/mtglib/internal/tls"
 	"github.com/9seconds/mtg/v2/mtglib/internal/tls/fake"
