@@ -66,9 +66,10 @@ type tomlConfig struct {
 			Interval string `toml:"interval" json:"interval,omitempty"`
 			Count    uint   `toml:"count" json:"count,omitempty"`
 		} `toml:"keep-alive" json:"keepAlive,omitempty"`
-		DOHIP   string   `toml:"doh-ip" json:"dohIp,omitempty"`
-		DNS     string   `toml:"dns" json:"dns,omitempty"`
-		Proxies []string `toml:"proxies" json:"proxies,omitempty"`
+		DOHIP             string   `toml:"doh-ip" json:"dohIp,omitempty"`
+		DNS               string   `toml:"dns" json:"dns,omitempty"`
+		Proxies           []string `toml:"proxies" json:"proxies,omitempty"`
+		PublicIPEndpoints []string `toml:"public-ip-endpoints" json:"publicIpEndpoints,omitempty"`
 	} `toml:"network" json:"network,omitempty"`
 	Stats struct {
 		StatsD struct {

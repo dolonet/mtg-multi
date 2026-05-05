@@ -332,7 +332,10 @@ func (d *Doctor) checkFrontingDomain(ntw mtglib.Network) bool {
 }
 
 func (d *Doctor) checkSecretHost(resolver *net.Resolver, ntw mtglib.Network) bool {
-	res := runSNICheck(context.Background(), resolver, d.conf, ntw)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	res := runSNICheck(ctx, resolver, d.conf, ntw)
 
 	if res.ResolveErr != nil {
 		tplError.Execute(os.Stdout, map[string]any{ //nolint: errcheck

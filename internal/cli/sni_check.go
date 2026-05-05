@@ -48,7 +48,8 @@ func (r sniCheckResult) OK() bool {
 // runSNICheck resolves conf.Secret.Host and compares the result with the
 // server's public IPv4 and IPv6. Public IPs come from config first and fall
 // back to on-the-fly detection via ntw. IP detection for the two families
-// runs concurrently.
+// runs concurrently and honors ctx — callers should supply a deadline,
+// since the HTTP fallback can otherwise block startup indefinitely.
 func runSNICheck(ctx context.Context,
 	resolver *net.Resolver,
 	conf *config.Config,
@@ -75,19 +76,20 @@ func runSNICheck(ctx context.Context,
 		res.Resolved = append(res.Resolved, a.IP)
 	}
 
+	endpoints := resolvePublicIPEndpoints(conf.Network.PublicIPEndpoints)
 	wg := sync.WaitGroup{}
 
 	wg.Go(func() {
 		res.OurIPv4 = conf.PublicIPv4.Get(nil)
 		if res.OurIPv4 == nil {
-			res.OurIPv4 = getIP(ntw, "tcp4")
+			res.OurIPv4 = getIP(ctx, ntw, "tcp4", endpoints)
 		}
 	})
 
 	wg.Go(func() {
 		res.OurIPv6 = conf.PublicIPv6.Get(nil)
 		if res.OurIPv6 == nil {
-			res.OurIPv6 = getIP(ntw, "tcp6")
+			res.OurIPv6 = getIP(ctx, ntw, "tcp6", endpoints)
 		}
 	})
 

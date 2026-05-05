@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/9seconds/mtg/v2/antireplay"
 	"github.com/9seconds/mtg/v2/events"
@@ -213,7 +214,10 @@ func warnSNIMismatch(conf *config.Config, ntw mtglib.Network, log mtglib.Logger)
 		return
 	}
 
-	res := runSNICheck(context.Background(), net.DefaultResolver, conf, ntw)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	res := runSNICheck(ctx, net.DefaultResolver, conf, ntw)
 
 	if res.ResolveErr != nil {
 		log.BindStr("hostname", res.Host).
@@ -223,6 +227,12 @@ func warnSNIMismatch(conf *config.Config, ntw mtglib.Network, log mtglib.Logger)
 
 	if !res.Known() {
 		log.Warning("SNI-DNS check: cannot detect public IP address; set public-ipv4/public-ipv6 in config or run 'mtg doctor'")
+		return
+	}
+
+	if len(res.Resolved) == 0 {
+		log.BindStr("hostname", res.Host).
+			Warning("SNI-DNS check: secret hostname does not resolve to any address")
 		return
 	}
 

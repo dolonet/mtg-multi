@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/9seconds/mtg/v2/internal/config"
 	"github.com/9seconds/mtg/v2/internal/utils"
@@ -54,6 +56,10 @@ func (a *Access) Run(cli *CLI, version string) error {
 		return fmt.Errorf("cannot init network: %w", err)
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	endpoints := resolvePublicIPEndpoints(conf.Network.PublicIPEndpoints)
 	wg := &sync.WaitGroup{}
 
 	wg.Go(func() {
@@ -62,7 +68,7 @@ func (a *Access) Run(cli *CLI, version string) error {
 			ip = conf.PublicIPv4.Get(nil)
 		}
 		if ip == nil {
-			ip = getIP(ntw, "tcp4")
+			ip = getIP(ctx, ntw, "tcp4", endpoints)
 		}
 
 		if ip != nil {
@@ -77,7 +83,7 @@ func (a *Access) Run(cli *CLI, version string) error {
 			ip = conf.PublicIPv6.Get(nil)
 		}
 		if ip == nil {
-			ip = getIP(ntw, "tcp6")
+			ip = getIP(ctx, ntw, "tcp6", endpoints)
 		}
 
 		if ip != nil {

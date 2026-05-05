@@ -71,9 +71,10 @@ type Config struct {
 			Interval TypeDuration    `json:"interval"`
 			Count    TypeConcurrency `json:"count"`
 		} `json:"keepAlive"`
-		DOHIP   TypeIP         `json:"dohIp"`
-		DNS     TypeDNSURI     `json:"dns"`
-		Proxies []TypeProxyURL `json:"proxies"`
+		DOHIP             TypeIP         `json:"dohIp"`
+		DNS               TypeDNSURI     `json:"dns"`
+		Proxies           []TypeProxyURL `json:"proxies"`
+		PublicIPEndpoints []TypeHttpsURL `json:"publicIpEndpoints"`
 	} `json:"network"`
 	Stats struct {
 		StatsD struct {
