@@ -27,6 +27,7 @@ func TestProxyServerDialerDropsCustomResolver(t *testing.T) {
 		0,
 		0,
 		DefaultKeepAliveConfig,
+		0,
 	)
 
 	if base.NativeDialer().Resolver != customResolver {

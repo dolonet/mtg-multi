@@ -17,8 +17,9 @@ type SimpleRun struct {
 	Concurrency         uint64        `kong:"name='concurrency',short='c',default='8192',help='Max number of concurrent connection to proxy.'"`                        //nolint: lll
 	TCPBuffer           string        `kong:"name='tcp-buffer',short='b',default='4KB',help='Deprecated and ignored'"`                                                 //nolint: lll
 	PreferIP            string        `kong:"name='prefer-ip',short='i',default='prefer-ipv6',help='IP preference. By default we prefer IPv6 with fallback to IPv4.'"` //nolint: lll
-	DomainFrontingPort  uint64        `kong:"name='domain-fronting-port',short='p',default='443',help='A port to access for domain fronting.'"`                        //nolint: lll
-	DomainFrontingIP    string        `kong:"name='domain-fronting-ip',help='An IP address to use for domain fronting instead of resolving the hostname via DNS.'"`    //nolint: lll
+	DomainFrontingPort  uint64        `kong:"name='domain-fronting-port',short='p',default='443',help='A port to access for domain fronting.'"`                                                                  //nolint: lll
+	DomainFrontingHost  string        `kong:"name='domain-fronting-host',help='Hostname or IP to dial for domain fronting instead of resolving the secret hostname.'"`                                           //nolint: lll
+	DomainFrontingIP    string        `kong:"name='domain-fronting-ip',help='Deprecated: use --domain-fronting-host. Setting this flag logs a warning at startup and the value is ignored.'"`                    //nolint: lll
 	DOHIP               net.IP        `kong:"name='doh-ip',short='n',default='1.1.1.1',help='IP address of DNS-over-HTTP to use.'"`                                    //nolint: lll
 	Timeout             time.Duration `kong:"name='timeout',short='t',default='10s',help='Network timeout to use'"`                                                    //nolint: lll
 	Socks5Proxies       []string      `kong:"name='socks5-proxy',short='s',help='Socks5 proxies to use for network access.'"`                                          //nolint: lll
@@ -52,6 +53,15 @@ func (s *SimpleRun) Run(cli *CLI, version string) error { //nolint: cyclop,funle
 		return fmt.Errorf("incorrect domain-fronting-port: %w", err)
 	}
 
+	if s.DomainFrontingHost != "" {
+		if err := conf.DomainFronting.Host.Set(s.DomainFrontingHost); err != nil {
+			return fmt.Errorf("incorrect domain-fronting-host: %w", err)
+		}
+	}
+
+	// --domain-fronting-ip is deprecated; the value is parsed only so the
+	// runtime check in runProxy can detect it and emit the warn-and-ignore
+	// log message. The value never reaches the dial path.
 	if s.DomainFrontingIP != "" {
 		if err := conf.DomainFrontingIP.Set(s.DomainFrontingIP); err != nil {
 			return fmt.Errorf("incorrect domain-fronting-ip: %w", err)

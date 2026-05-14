@@ -9,12 +9,17 @@
 # SNI/IP because the domain resolves to this server's IP.
 #
 # Quick start:
-#   1. Set YOUR_DOMAIN below (and in mtg-config.toml)
-#   2. docker compose up -d
-#   3. mtg generate-secret YOUR_DOMAIN   -> put it in mtg-config.toml
-#   4. docker compose restart mtg
+#   1. Set DOMAIN in a .env file next to this one (or export it)
+#   2. mtg generate-secret YOUR_DOMAIN   -> paste into mtg-config.toml
+#   3. docker compose up -d
+#
+# DOMAIN is forwarded to both Caddy (TLS cert) and HAProxy (SNI ACL),
+# so the SNI/cert/secret all line up from a single source.
 #
 # See BEST_PRACTICES.md and the project wiki for background.
+
+x-domain-env: &domain-env
+  DOMAIN: ${DOMAIN:-example.com}
 
 services:
   haproxy:
@@ -23,31 +28,37 @@ services:
       - "443:443"
       - "80:80"
     volumes:
-      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro,Z
+    environment:
+      <<: *domain-env
     depends_on:
       - mtg
       - web
     restart: unless-stopped
+    sysctls:
+      - net.ipv4.ip_unprivileged_port_start=80
 
   mtg:
     image: nineseconds/mtg:2
     volumes:
-      - ./mtg-config.toml:/config/config.toml:ro
+      - ./mtg-config.toml:/config/config.toml:ro,Z
     expose:
       - "3128"
     restart: unless-stopped
+    extra_hosts:
+      - "host.containers.internal:host-gateway"
 
   web:
     image: caddy:alpine
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro,Z
       - caddy_data:/data
-      - ./www:/srv:ro
+      - ./www:/srv:ro,Z
     expose:
       - "80"
       - "8443"
     environment:
-      DOMAIN: ${DOMAIN:-example.com}
+      <<: *domain-env
     restart: unless-stopped
 
 volumes:

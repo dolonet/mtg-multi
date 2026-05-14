@@ -1,15 +1,26 @@
 # Minimal mtg configuration for the SNI-router setup.
 #
-# 1. Generate a secret:  mtg generate-secret --hex example.com
-# 2. Paste it below.
-# 3. Replace example.com with your actual domain everywhere.
+# 1. Generate a secret:  mtg generate-secret --hex <your.domain>
+# 2. Paste it into the `secret` field below.
+# 3. Set DOMAIN=<your.domain> in .env (HAProxy + Caddy pick it up).
 
 secret = "PASTE_YOUR_SECRET_HERE"
-bind-to = "0.0.0.0:3128"
+bind-to = "[::]:3128"
 
 # HAProxy in front sends PROXY protocol v2 headers so mtg can see the
 # real client IP.  Keep this in sync with haproxy.cfg (`send-proxy-v2`).
 proxy-protocol-listener = true
+
+# Fronting target: point mtg at the Caddy container directly so its
+# fallback dial (for non-Telegram TLS) bypasses HAProxy and doesn't
+# loop back here.  Without this, mtg resolves the secret's hostname
+# via DNS, which in this setup resolves to this server -> HAProxy ->
+# mtg again.  See README's "Fronting loop" section for the long form.
+# Requires mtg >= 2.4 (#480 added hostname acceptance for the target).
+[domain-fronting]
+host = "web"
+port = 8443
+proxy-protocol = true
 
 [defense.anti-replay]
 enabled = true

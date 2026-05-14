@@ -14,10 +14,11 @@ import (
 type network struct {
 	net.Dialer
 
-	keepAliveConfig net.KeepAliveConfig
-	httpTimeout     time.Duration
-	idleTimeout     time.Duration
-	userAgent       string
+	keepAliveConfig  net.KeepAliveConfig
+	httpTimeout      time.Duration
+	idleTimeout      time.Duration
+	userAgent        string
+	tcpNotSentLowat  int
 }
 
 func (n *network) Dial(network, address string) (essentials.Conn, error) {
@@ -38,7 +39,7 @@ func (n *network) DialContext(ctx context.Context, network, address string) (ess
 
 	tcpConn := conn.(*net.TCPConn)
 
-	return tcpConn, setCommonSocketOptions(tcpConn, n.keepAliveConfig)
+	return tcpConn, setCommonSocketOptions(tcpConn, n.keepAliveConfig, n.tcpNotSentLowat)
 }
 
 func (n *network) MakeHTTPClient(
@@ -73,6 +74,7 @@ func New(
 	httpTimeout,
 	idleTimeout time.Duration,
 	keepAliveConfig net.KeepAliveConfig,
+	tcpNotSentLowat int,
 ) mtglib.Network {
 	if dnsResolver == nil {
 		dnsResolver = net.DefaultResolver
@@ -80,6 +82,10 @@ func New(
 
 	if userAgent == "" {
 		userAgent = UserAgent
+	}
+
+	if tcpNotSentLowat == 0 {
+		tcpNotSentLowat = DefaultTCPNotSentLowat
 	}
 
 	return &network{
@@ -92,5 +98,6 @@ func New(
 		idleTimeout:     idleTimeout,
 		httpTimeout:     httpTimeout,
 		keepAliveConfig: keepAliveConfig,
+		tcpNotSentLowat: tcpNotSentLowat,
 	}
 }

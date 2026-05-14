@@ -27,10 +27,9 @@ natural and passive DPI has nothing to flag.
 # 2. Generate an mtg secret:
 docker run --rm nineseconds/mtg:2 generate-secret --hex YOUR_DOMAIN
 
-# 3. Edit the config files:
-#    - mtg-config.toml  →  paste the secret
-#    - haproxy.cfg       →  replace "example.com" in the SNI ACL
-#    - .env or export    →  DOMAIN=your.domain
+# 3. Configure:
+#    - .env (or export)  →  DOMAIN=your.domain   # used by HAProxy + Caddy
+#    - mtg-config.toml   →  paste the secret
 
 # 4. (Optional) put your site content into www/
 
@@ -47,14 +46,51 @@ docker compose exec mtg mtg access /config/config.toml
 
 HAProxy forwards TCP connections to mtg and Caddy with a PROXY protocol
 v2 header so both backends see the real client IP instead of HAProxy's
-container address.  The three pieces must stay in sync:
+container address.  Caddy also receives PROXY v2 from mtg on the
+fronting path (see "Fronting loop" below), so all four pieces below
+must stay in sync:
 
 - `haproxy.cfg` — `send-proxy-v2` on the `mtg` and `web` backend `server` lines
-- `mtg-config.toml` — `proxy-protocol-listener = true`
+- `mtg-config.toml` — `proxy-protocol-listener = true` (HAProxy → mtg)
+- `mtg-config.toml` — `[domain-fronting].proxy-protocol = true` (mtg → Caddy on fronting)
 - `Caddyfile` — `listener_wrappers { proxy_protocol { ... } tls }` on `:8443`
 
-If you disable one, disable all three, otherwise the backend will fail
+If you disable one, disable all four, otherwise the backend will fail
 to parse the connection.
+
+## Fronting loop (why `[domain-fronting]` is set explicitly)
+
+When mtg sees TLS that isn't valid Telegram (a probe or a browser
+hitting the domain on `:443`), it forwards that connection to a real
+web server — "domain fronting".  By default mtg uses the secret's
+hostname as the fronting target and resolves it via DNS, which in
+this setup points back to this server: the fronting dial lands on
+HAProxy, SNI matches the secret, HAProxy routes the connection back
+to mtg → loop.
+
+The trigger is DNS, not name equality: any time the secret's hostname
+resolves to this host, the loop reproduces.  In an SNI-router
+deployment the secret's hostname has to point here for clients to
+reach mtg in the first place, so the loop is the default state unless
+mtg is steered away from HAProxy.
+
+`mtg-config.toml` therefore pins the fronting target to the Caddy
+container directly:
+
+```toml
+[domain-fronting]
+host = "web"
+port = 8443
+proxy-protocol = true
+```
+
+`host = "web"` resolves through compose-network DNS to the `web`
+service (Caddy), bypassing HAProxy.  `proxy-protocol = true` matches
+Caddy's `:8443` listener wrapper so the real client IP still
+propagates to Caddy's logs.
+
+Requires mtg ≥ 2.4 — hostname acceptance for the fronting target was
+added in #480.
 
 ## ACME (Let's Encrypt) notes
 
@@ -83,7 +119,7 @@ domain's DNS A/AAAA record points to this server before starting.
 | File | Purpose |
 |---|---|
 | `docker-compose.yml` | Service definitions |
-| `haproxy.cfg` | SNI routing rules — **edit the domain** |
+| `haproxy.cfg` | SNI routing rules (reads `$DOMAIN` from the environment) |
 | `mtg-config.toml` | mtg proxy config — **paste your secret** |
 | `Caddyfile` | Web server config (auto-HTTPS) |
 | `www/` | Static site content served by Caddy |

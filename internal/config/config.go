@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/url"
 
 	"github.com/dolonet/mtg-multi/mtglib"
@@ -39,6 +38,7 @@ type Config struct {
 	PublicIPv4                  TypeIP          `json:"publicIpv4"`
 	PublicIPv6                  TypeIP          `json:"publicIpv6"`
 	DomainFronting              struct {
+		Host          TypeHost `json:"host"`
 		IP            TypeIP   `json:"ip"`
 		Port          TypePort `json:"port"`
 		ProxyProtocol TypeBool `json:"proxyProtocol"`
@@ -72,9 +72,10 @@ type Config struct {
 			Interval TypeDuration    `json:"interval"`
 			Count    TypeConcurrency `json:"count"`
 		} `json:"keepAlive"`
-		DOHIP   TypeIP         `json:"dohIp"`
-		DNS     TypeDNSURI     `json:"dns"`
-		Proxies []TypeProxyURL `json:"proxies"`
+		DOHIP            TypeIP         `json:"dohIp"`
+		DNS              TypeDNSURI     `json:"dns"`
+		Proxies          []TypeProxyURL `json:"proxies"`
+		TCPNotSentLowat  TypeBytes      `json:"tcpNotSentLowat"`
 	} `json:"network"`
 	APIBindTo TypeHostPort `json:"apiBindTo"`
 	Throttle  struct {
@@ -123,14 +124,8 @@ func (c *Config) GetDomainFrontingPort(defaultValue uint) uint {
 	return c.DomainFrontingPort.Get(defaultValue)
 }
 
-func (c *Config) GetDomainFrontingIP(defaultValue net.IP) string {
-	if ip := c.DomainFronting.IP.Get(nil); ip != nil {
-		return ip.String()
-	}
-	if ip := c.DomainFrontingIP.Get(defaultValue); ip != nil {
-		return ip.String()
-	}
-	return ""
+func (c *Config) GetDomainFrontingHost() string {
+	return c.DomainFronting.Host.Get("")
 }
 
 func (c *Config) GetDomainFrontingProxyProtocol(defaultValue bool) bool {

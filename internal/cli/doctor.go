@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
@@ -69,7 +70,8 @@ var (
 type Doctor struct {
 	conf *config.Config
 
-	ConfigPath string `kong:"arg,required,type='existingfile',help='Path to the configuration file.',name='config-path'"` //nolint: lll
+	ConfigPath      string `kong:"arg,required,type='existingfile',help='Path to the configuration file.',name='config-path'"` //nolint: lll
+	SkipNativeCheck bool   `kong:"help='Skip the native network connectivity check (useful when proxy chaining is configured and direct egress is not expected to work).',name='skip-native-check'"` //nolint: lll
 }
 
 func (d *Doctor) Run(cli *CLI, version string) error {
@@ -103,10 +105,15 @@ func (d *Doctor) Run(cli *CLI, version string) error {
 			Interval: conf.Network.KeepAlive.Interval.Get(0),
 			Count:    int(conf.Network.KeepAlive.Count.Get(0)),
 		},
+		int(conf.Network.TCPNotSentLowat.Get(network.DefaultTCPNotSentLowat)),
 	)
 
 	fmt.Println("Validate native network connectivity")
-	everythingOK = d.checkNetwork(base) && everythingOK
+	if d.SkipNativeCheck {
+		fmt.Println("  ⏭ Skipped (--skip-native-check)")
+	} else {
+		everythingOK = d.checkNetwork(base) && everythingOK
+	}
 
 	for _, url := range conf.Network.Proxies {
 		value, err := network.NewProxyNetwork(base, url.Get(nil))
@@ -140,7 +147,18 @@ func (d *Doctor) checkDeprecatedConfig() bool {
 			"when":        "2.3.0",
 			"old":         "domain-fronting-ip",
 			"old_section": "",
-			"new":         "ip",
+			"new":         "host",
+			"new_section": "domain-fronting",
+		})
+	}
+
+	if d.conf.DomainFronting.IP.Value != nil {
+		ok = false
+		tplWDeprecatedConfig.Execute(os.Stdout, map[string]string{ //nolint: errcheck
+			"when":        "2.4.0",
+			"old":         "ip",
+			"old_section": "domain-fronting",
+			"new":         "host",
 			"new_section": "domain-fronting",
 		})
 	}
@@ -220,18 +238,32 @@ func (d *Doctor) checkNetwork(ntw mtglib.Network) bool {
 	dcs := slices.Collect(maps.Keys(essentials.TelegramCoreAddresses))
 	slices.Sort(dcs)
 
+	errs := make([]error, len(dcs))
+
+	var wg sync.WaitGroup
+	for i, dc := range dcs {
+		wg.Go(func() {
+			defer func() {
+				if r := recover(); r != nil {
+					errs[i] = fmt.Errorf("panic: %v", r)
+				}
+			}()
+			errs[i] = d.checkNetworkAddresses(ntw, essentials.TelegramCoreAddresses[dc])
+		})
+	}
+	wg.Wait()
+
 	ok := true
 
-	for _, dc := range dcs {
-		err := d.checkNetworkAddresses(ntw, essentials.TelegramCoreAddresses[dc])
-		if err == nil {
+	for i, dc := range dcs {
+		if errs[i] == nil {
 			tplODCConnect.Execute(os.Stdout, map[string]any{ //nolint: errcheck
 				"dc": dc,
 			})
 		} else {
 			tplEDCConnect.Execute(os.Stdout, map[string]any{ //nolint: errcheck
 				"dc":    dc,
-				"error": err,
+				"error": errs[i],
 			})
 			ok = false
 		}
@@ -306,8 +338,8 @@ func (d *Doctor) getFirstSecretHost() string {
 
 func (d *Doctor) checkFrontingDomain(ntw mtglib.Network) bool {
 	host := d.getFirstSecretHost()
-	if ip := d.conf.GetDomainFrontingIP(nil); ip != "" {
-		host = ip
+	if override := d.conf.GetDomainFrontingHost(); override != "" {
+		host = override
 	}
 
 	port := d.conf.GetDomainFrontingPort(mtglib.DefaultDomainFrontingPort)
