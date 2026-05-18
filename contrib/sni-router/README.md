@@ -114,6 +114,28 @@ domain's DNS A/AAAA record points to this server before starting.
            └─────────┘  └─────────┘
 ```
 
+## OpenWrt + podman-compose
+
+OpenWrt's firewall zones are bound to interface *names*.  With bare
+`podman` you pin the static `podman0` bridge into a zone and you're
+done — but `podman-compose up` creates a project-scoped network, and
+netavark spawns a *new* bridge for it (`podman1`, `podman2`, …) that
+has no firewall rules, so containers lose outbound access.
+
+Reuse the pre-configured `podman0` by adding to this compose file:
+
+```yaml
+networks:
+  default:
+    external: true
+    name: podman
+```
+
+That tells compose to attach to the router-managed network instead of
+spinning up a new one.  Background: upstream
+[discussion #513](https://github.com/9seconds/mtg/discussions/513)
+and the [OpenWrt forum thread](https://forum.openwrt.org/t/podman-compose-dontt-have-network-access/250230).
+
 ## Files
 
 | File | Purpose |
