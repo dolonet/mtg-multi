@@ -9,21 +9,21 @@ import (
 )
 
 type tomlConfig struct {
-	Debug                       bool   `toml:"debug" json:"debug,omitempty"`
-	AllowFallbackOnUnknownDC    bool   `toml:"allow-fallback-on-unknown-dc" json:"allowFallbackOnUnknownDc,omitempty"`
+	Debug                       bool              `toml:"debug" json:"debug,omitempty"`
+	AllowFallbackOnUnknownDC    bool              `toml:"allow-fallback-on-unknown-dc" json:"allowFallbackOnUnknownDc,omitempty"`
 	Secret                      string            `toml:"secret" json:"secret,omitempty"`
 	Secrets                     map[string]string `toml:"secrets" json:"secrets,omitempty"`
 	BindTo                      any               `toml:"bind-to" json:"bindTo"`
-	ProxyProtocolListener       bool   `toml:"proxy-protocol-listener" json:"proxyProtocolListener"`
-	PreferIP                    string `toml:"prefer-ip" json:"preferIp,omitempty"`
-	AutoUpdate                  bool   `toml:"auto-update" json:"autoUpdate,omitempty"`
-	DomainFrontingPort          uint   `toml:"domain-fronting-port" json:"domainFrontingPort,omitempty"`
-	DomainFrontingIP            string `toml:"domain-fronting-ip" json:"domainFrontingIp,omitempty"`
-	DomainFrontingProxyProtocol bool   `toml:"domain-fronting-proxy-protocol" json:"domainFrontingProxyProtocol,omitempty"`
-	TolerateTimeSkewness        string `toml:"tolerate-time-skewness" json:"tolerateTimeSkewness,omitempty"`
-	Concurrency                 uint   `toml:"concurrency" json:"concurrency,omitempty"`
-	PublicIPv4                  string `toml:"public-ipv4" json:"publicIpv4,omitempty"`
-	PublicIPv6                  string `toml:"public-ipv6" json:"publicIpv6,omitempty"`
+	ProxyProtocolListener       bool              `toml:"proxy-protocol-listener" json:"proxyProtocolListener"`
+	PreferIP                    string            `toml:"prefer-ip" json:"preferIp,omitempty"`
+	AutoUpdate                  bool              `toml:"auto-update" json:"autoUpdate,omitempty"`
+	DomainFrontingPort          uint              `toml:"domain-fronting-port" json:"domainFrontingPort,omitempty"`
+	DomainFrontingIP            string            `toml:"domain-fronting-ip" json:"domainFrontingIp,omitempty"`
+	DomainFrontingProxyProtocol bool              `toml:"domain-fronting-proxy-protocol" json:"domainFrontingProxyProtocol,omitempty"`
+	TolerateTimeSkewness        string            `toml:"tolerate-time-skewness" json:"tolerateTimeSkewness,omitempty"`
+	Concurrency                 uint              `toml:"concurrency" json:"concurrency,omitempty"`
+	PublicIPv4                  string            `toml:"public-ipv4" json:"publicIpv4,omitempty"`
+	PublicIPv6                  string            `toml:"public-ipv6" json:"publicIpv6,omitempty"`
 	DomainFronting              struct {
 		Host          string `toml:"host" json:"host,omitempty"`
 		IP            string `toml:"ip" json:"ip,omitempty"`

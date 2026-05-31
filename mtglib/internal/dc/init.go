@@ -42,7 +42,7 @@ type Updater interface {
 }
 
 // https://github.com/telegramdesktop/tdesktop/blob/master/Telegram/SourceFiles/mtproto/mtproto_dc_options.cpp#L30
-var defaultDCAddrSet = (func() dcAddrSet {
+var defaultDCAddrSet = func() dcAddrSet {
 	addrSet := dcAddrSet{
 		v4: make(map[int][]Addr),
 		v6: make(map[int][]Addr),
@@ -74,4 +74,4 @@ var defaultDCAddrSet = (func() dcAddrSet {
 	}
 
 	return addrSet
-})()
+}()

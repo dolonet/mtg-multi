@@ -14,7 +14,8 @@ type TypeDuration struct {
 
 func (t *TypeDuration) Set(value string) error {
 	parsedValue, err := time.ParseDuration(
-		typeDurationStringCleaner.Replace(strings.ToLower(value)))
+		typeDurationStringCleaner.Replace(strings.ToLower(value)),
+	)
 	if err != nil {
 		return fmt.Errorf("incorrect duration (%s): %w", value, err)
 	}

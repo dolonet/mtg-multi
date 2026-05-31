@@ -27,8 +27,10 @@ const (
 
 // --- Buffer strategies ---
 
-var pool16K = sync.Pool{New: func() any { b := make([]byte, bufSize16K); return &b }}
-var pool4K = sync.Pool{New: func() any { b := make([]byte, bufSize4K); return &b }}
+var (
+	pool16K = sync.Pool{New: func() any { b := make([]byte, bufSize16K); return &b }}
+	pool4K  = sync.Pool{New: func() any { b := make([]byte, bufSize4K); return &b }}
+)
 
 type strategy int
 
@@ -89,33 +91,33 @@ func pump(strat strategy, dst, src net.Conn) int64 {
 // --- Metrics ---
 
 type metrics struct {
-	ActiveConns  atomic.Int64
-	TotalConns   atomic.Int64
-	TotalBytes   atomic.Int64
-	FailedConns  atomic.Int64
+	ActiveConns atomic.Int64
+	TotalConns  atomic.Int64
+	TotalBytes  atomic.Int64
+	FailedConns atomic.Int64
 }
 
 var m metrics
 
 type metricsSnapshot struct {
-	Strategy     string  `json:"strategy"`
-	Uptime       string  `json:"uptime"`
-	ActiveConns  int64   `json:"active_conns"`
-	TotalConns   int64   `json:"total_conns"`
-	TotalBytes   int64   `json:"total_bytes"`
-	FailedConns  int64   `json:"failed_conns"`
-	Goroutines   int     `json:"goroutines"`
-	RSSKB        int64   `json:"rss_kb"`
-	VmRSSKB      int64   `json:"vm_rss_kb"`
-	StackInuse   uint64  `json:"stack_inuse_bytes"`
-	HeapInuse    uint64  `json:"heap_inuse_bytes"`
-	HeapAlloc    uint64  `json:"heap_alloc_bytes"`
-	HeapSys      uint64  `json:"heap_sys_bytes"`
-	StackSys     uint64  `json:"stack_sys_bytes"`
-	Sys          uint64  `json:"sys_bytes"`
-	NumGC        uint32  `json:"num_gc"`
-	GCPauseTotalUs int64 `json:"gc_pause_total_us"`
-	GOMAXPROCS   int     `json:"gomaxprocs"`
+	Strategy       string `json:"strategy"`
+	Uptime         string `json:"uptime"`
+	ActiveConns    int64  `json:"active_conns"`
+	TotalConns     int64  `json:"total_conns"`
+	TotalBytes     int64  `json:"total_bytes"`
+	FailedConns    int64  `json:"failed_conns"`
+	Goroutines     int    `json:"goroutines"`
+	RSSKB          int64  `json:"rss_kb"`
+	VmRSSKB        int64  `json:"vm_rss_kb"`
+	StackInuse     uint64 `json:"stack_inuse_bytes"`
+	HeapInuse      uint64 `json:"heap_inuse_bytes"`
+	HeapAlloc      uint64 `json:"heap_alloc_bytes"`
+	HeapSys        uint64 `json:"heap_sys_bytes"`
+	StackSys       uint64 `json:"stack_sys_bytes"`
+	Sys            uint64 `json:"sys_bytes"`
+	NumGC          uint32 `json:"num_gc"`
+	GCPauseTotalUs int64  `json:"gc_pause_total_us"`
+	GOMAXPROCS     int    `json:"gomaxprocs"`
 }
 
 func readRSSKB() int64 {
@@ -215,7 +217,8 @@ func metricsLogger(ctx context.Context, strat strategy, startTime time.Time, log
 		case <-ticker.C:
 			snap := getMetrics(strat, startTime)
 			elapsed := time.Since(startTime).Seconds()
-			fmt.Fprintf(f, "%.0f,%d,%d,%.1f,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
+			fmt.Fprintf(
+				f, "%.0f,%d,%d,%.1f,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
 				elapsed,
 				snap.ActiveConns,
 				snap.TotalConns,

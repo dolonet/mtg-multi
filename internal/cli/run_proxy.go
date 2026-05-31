@@ -179,7 +179,8 @@ func makeEventStream(conf *config.Config, logger mtglib.Logger) (mtglib.EventStr
 			conf.Stats.StatsD.Address.Get(""),
 			logger.Named("statsd"),
 			conf.Stats.StatsD.MetricPrefix.Get(stats.DefaultStatsdMetricPrefix),
-			conf.Stats.StatsD.TagFormat.Get(stats.DefaultStatsdTagFormat))
+			conf.Stats.StatsD.TagFormat.Get(stats.DefaultStatsdTagFormat),
+		)
 		if err != nil {
 			return nil, fmt.Errorf("cannot build statsd observer: %w", err)
 		}
@@ -305,7 +306,8 @@ func runProxy(conf *config.Config, version string) error { //nolint: funlen, cyc
 		ntw,
 		func(ctx context.Context, size int) {
 			eventStream.Send(ctx, mtglib.NewEventIPListSize(size, true))
-		})
+		},
+	)
 	if err != nil {
 		return fmt.Errorf("cannot build ip blocklist: %w", err)
 	}

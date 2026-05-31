@@ -57,10 +57,10 @@ func (poolStrategy) Pump(src, dst net.Conn) (int64, error) {
 // --- Memory measurement ---
 
 type memSnapshot struct {
-	StackInuse uint64
-	HeapInuse  uint64
-	HeapAlloc  uint64
-	NumGC      uint32
+	StackInuse   uint64
+	HeapInuse    uint64
+	HeapAlloc    uint64
+	NumGC        uint32
 	PauseTotalNs uint64
 	NumGoroutine int
 }
@@ -149,8 +149,8 @@ func runTest(strat bufStrategy, conns int, dataPerConn int64, reportInterval tim
 					tg.Close()     //nolint: errcheck
 				}()
 				strat.Pump(tg, client) //nolint: errcheck
-				client.Close() //nolint: errcheck
-				tg.Close()     //nolint: errcheck
+				client.Close()         //nolint: errcheck
+				tg.Close()             //nolint: errcheck
 				<-done
 			}(client)
 		}

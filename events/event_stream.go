@@ -5,8 +5,8 @@ import (
 	"math/rand/v2"
 	"runtime"
 
-	"github.com/dolonet/mtg-multi/mtglib"
 	"github.com/OneOfOne/xxhash"
+	"github.com/dolonet/mtg-multi/mtglib"
 )
 
 // EventStream is a default implementation of the [mtglib.EventStream]
