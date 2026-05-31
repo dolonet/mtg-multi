@@ -15,9 +15,9 @@
 # you have any issue.
 debug = true
 
-# A secret. Please remember that mtg supports only FakeTLS mode, legacy
-# simple and secured mode are prohibited. For you it means that secret
-# should either be base64-encoded or starts with ee.
+# A secret (required). Please remember that mtg supports only FakeTLS
+# mode, legacy simple and secured mode are prohibited. For you it means
+# that secret should either be base64-encoded or starts with ee.
 secret = "ee367a189aee18fa31c190054efd4a8e9573746f726167652e676f6f676c65617069732e636f6d"
 
 # Host:port pair to bind the built-in stats HTTP API server.
@@ -104,6 +104,8 @@ auto-update = false
 #
 # Sometimes time can be skewed so we accept all messages within a
 # time range of this parameter.
+#
+# Default value is 3s
 tolerate-time-skewness = "5s"
 
 # Telegram has a concept of DC. You can think about DC as a number of a cluster

@@ -29,7 +29,12 @@ docker run --rm nineseconds/mtg:2 generate-secret --hex YOUR_DOMAIN
 
 # 3. Configure:
 #    - .env (or export)  →  DOMAIN=your.domain   # used by HAProxy + Caddy
-#    - mtg-config.toml   →  paste the secret
+#    - render mtg-config.toml from the tracked template
+#      (the rendered file is gitignored — secret stays out of git):
+export MTG_SECRET=...    # paste the hex secret from step 2
+envsubst < mtg-config.toml.example > mtg-config.toml
+#      (Or `cp mtg-config.toml.example mtg-config.toml` and edit ${MTG_SECRET}
+#      by hand if you don't have envsubst.)
 
 # 4. (Optional) put your site content into www/
 
@@ -57,6 +62,29 @@ must stay in sync:
 
 If you disable one, disable all four, otherwise the backend will fail
 to parse the connection.
+
+### Why HAProxy uses `network_mode: host`
+
+A published port on a bridge network rewrites the source IP of inbound
+connections to the bridge gateway before HAProxy sees it (Docker's
+`docker-proxy`, Podman's `slirp4netns`/`pasta`), so the PROXY v2 header
+HAProxy forwards downstream carries that gateway address, not the real
+client.  Host-mode HAProxy binds in the host netns directly, no NAT in
+the path, and the rewrite never happens.  mtg and Caddy stay on the
+compose bridge and are published on `127.0.0.1` only — HAProxy reaches
+them over host loopback.  `mtg-config.toml` does not need to change;
+fronting still uses `host = "web"` over compose-network DNS.
+
+**Trade-offs.**
+- HAProxy owns the host's `:443` and `:80` — don't run anything else
+  on those ports.
+- Linux host only.  On Docker Desktop (macOS/Windows), "host" means
+  the Linux VM, not the user's machine, so external clients can't
+  reach the proxy.
+- If you run Docker with `userns-remap`, the in-container "root"
+  loses the privilege to bind `<1024` on the host; either disable
+  `userns-remap` for this stack or lower `net.ipv4.ip_unprivileged_port_start`
+  on the host.
 
 ## Fronting loop (why `[domain-fronting]` is set explicitly)
 
@@ -142,6 +170,7 @@ and the [OpenWrt forum thread](https://forum.openwrt.org/t/podman-compose-dontt-
 |---|---|
 | `docker-compose.yml` | Service definitions |
 | `haproxy.cfg` | SNI routing rules (reads `$DOMAIN` from the environment) |
-| `mtg-config.toml` | mtg proxy config — **paste your secret** |
+| `mtg-config.toml.example` | mtg proxy config template — render with `envsubst` or copy + edit |
+| `mtg-config.toml` | Rendered mtg proxy config (gitignored, contains your secret) |
 | `Caddyfile` | Web server config (auto-HTTPS) |
 | `www/` | Static site content served by Caddy |

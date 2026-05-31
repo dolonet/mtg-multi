@@ -24,6 +24,8 @@ type SimpleRun struct {
 	Timeout             time.Duration `kong:"name='timeout',short='t',default='10s',help='Network timeout to use'"`                                                    //nolint: lll
 	Socks5Proxies       []string      `kong:"name='socks5-proxy',short='s',help='Socks5 proxies to use for network access.'"`                                          //nolint: lll
 	AntiReplayCacheSize string        `kong:"name='antireplay-cache-size',short='a',default='1MB',help='A size of anti-replay cache to use.'"`                         //nolint: lll
+
+	ProxyProtocolListener bool `kong:"name='proxy-protocol-listener',help='Expect PROXY protocol (v1 or v2) headers on the listener. Use when mtg sits behind HAProxy, nginx stream, or similar.'"` //nolint: lll
 }
 
 func (s *SimpleRun) Run(cli *CLI, version string) error { //nolint: cyclop,funlen
@@ -101,6 +103,7 @@ func (s *SimpleRun) Run(cli *CLI, version string) error { //nolint: cyclop,funle
 	conf.Debug.Value = s.Debug
 	conf.AllowFallbackOnUnknownDC.Value = true
 	conf.Defense.AntiReplay.Enabled.Value = true
+	conf.ProxyProtocolListener.Value = s.ProxyProtocolListener
 
 	if err := conf.Validate(); err != nil {
 		return fmt.Errorf("invalid result configuration: %w", err)
