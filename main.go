@@ -9,8 +9,8 @@
 package main
 
 import (
-	"github.com/dolonet/mtg-multi/internal/cli"
 	"github.com/alecthomas/kong"
+	"github.com/dolonet/mtg-multi/internal/cli"
 )
 
 func main() {

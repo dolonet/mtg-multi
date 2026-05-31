@@ -53,7 +53,8 @@ func (suite *SocksProxyTestSuite) SetupSuite() {
 					"user": "pass",
 				},
 			},
-		}))
+		}),
+	)
 	suite.wg.Go(func() {
 		suite.authServer.Serve(suite.authListener) //nolint: errcheck
 	})

@@ -14,11 +14,11 @@ import (
 type network struct {
 	net.Dialer
 
-	keepAliveConfig  net.KeepAliveConfig
-	httpTimeout      time.Duration
-	idleTimeout      time.Duration
-	userAgent        string
-	tcpNotSentLowat  int
+	keepAliveConfig net.KeepAliveConfig
+	httpTimeout     time.Duration
+	idleTimeout     time.Duration
+	userAgent       string
+	tcpNotSentLowat int
 }
 
 func (n *network) Dial(network, address string) (essentials.Conn, error) {

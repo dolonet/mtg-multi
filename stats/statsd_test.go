@@ -106,24 +106,28 @@ func (suite *StatsdTestSuite) TearDownTest() {
 
 func (suite *StatsdTestSuite) TestTelegramPath() {
 	suite.statsd.EventStart(
-		mtglib.NewEventStart("connID", net.ParseIP("10.0.0.10")))
+		mtglib.NewEventStart("connID", net.ParseIP("10.0.0.10")),
+	)
 	time.Sleep(statsdSleepTime)
 	suite.Equal("mtg.client_connections:+1|g|#ip_family:ipv4", suite.statsdServer.String())
 
 	suite.statsd.EventConnectedToDC(
-		mtglib.NewEventConnectedToDC("connID", net.ParseIP("10.1.0.10"), 2))
+		mtglib.NewEventConnectedToDC("connID", net.ParseIP("10.1.0.10"), 2),
+	)
 	time.Sleep(statsdSleepTime)
 	suite.Contains(suite.statsdServer.String(),
 		"mtg.telegram_connections:+1|g|#telegram_ip:10.1.0.10,dc:2")
 
 	suite.statsd.EventTraffic(
-		mtglib.NewEventTraffic("connID", 30, true))
+		mtglib.NewEventTraffic("connID", 30, true),
+	)
 	time.Sleep(statsdSleepTime)
 	suite.Contains(suite.statsdServer.String(),
 		"mtg.telegram_traffic:30|c|#telegram_ip:10.1.0.10,dc:2,direction:to_client")
 
 	suite.statsd.EventTraffic(
-		mtglib.NewEventTraffic("connID", 90, false))
+		mtglib.NewEventTraffic("connID", 90, false),
+	)
 	time.Sleep(statsdSleepTime)
 	suite.Contains(suite.statsdServer.String(),
 		"mtg.telegram_traffic:90|c|#telegram_ip:10.1.0.10,dc:2,direction:from_client")
@@ -141,7 +145,8 @@ func (suite *StatsdTestSuite) TestTelegramPath() {
 
 func (suite *StatsdTestSuite) TestDomainFrontingPath() {
 	suite.statsd.EventStart(
-		mtglib.NewEventStart("connID", net.ParseIP("10.0.0.10")))
+		mtglib.NewEventStart("connID", net.ParseIP("10.0.0.10")),
+	)
 	time.Sleep(statsdSleepTime)
 	suite.Equal("mtg.client_connections:+1|g|#ip_family:ipv4", suite.statsdServer.String())
 
@@ -152,13 +157,15 @@ func (suite *StatsdTestSuite) TestDomainFrontingPath() {
 		`mtg.domain_fronting_connections:+1|g|#ip_family:ipv4`)
 
 	suite.statsd.EventTraffic(
-		mtglib.NewEventTraffic("connID", 30, true))
+		mtglib.NewEventTraffic("connID", 30, true),
+	)
 	time.Sleep(statsdSleepTime)
 	suite.Contains(suite.statsdServer.String(),
 		`mtg.domain_fronting_traffic:30|c|#direction:to_client`)
 
 	suite.statsd.EventTraffic(
-		mtglib.NewEventTraffic("connID", 90, false))
+		mtglib.NewEventTraffic("connID", 90, false),
+	)
 	time.Sleep(statsdSleepTime)
 	suite.Contains(suite.statsdServer.String(),
 		`mtg.domain_fronting_traffic:90|c|#direction:from_client`)
@@ -183,7 +190,8 @@ func (suite *StatsdTestSuite) TestEventConcurrencyLimited() {
 
 func (suite *StatsdTestSuite) TestEventIPBlocklisted() {
 	suite.statsd.EventIPBlocklisted(
-		mtglib.NewEventIPBlocklisted(net.ParseIP("10.0.0.10")))
+		mtglib.NewEventIPBlocklisted(net.ParseIP("10.0.0.10")),
+	)
 
 	time.Sleep(statsdSleepTime)
 	suite.Equal("mtg.ip_blocklisted:1|c|#ip_list:blocklist", suite.statsdServer.String())
@@ -191,7 +199,8 @@ func (suite *StatsdTestSuite) TestEventIPBlocklisted() {
 
 func (suite *StatsdTestSuite) TestEventIPAllowlisted() {
 	suite.statsd.EventIPBlocklisted(
-		mtglib.NewEventIPAllowlisted(net.ParseIP("10.0.0.10")))
+		mtglib.NewEventIPAllowlisted(net.ParseIP("10.0.0.10")),
+	)
 
 	time.Sleep(statsdSleepTime)
 	suite.Equal("mtg.ip_blocklisted:1|c|#ip_list:allowlist", suite.statsdServer.String())

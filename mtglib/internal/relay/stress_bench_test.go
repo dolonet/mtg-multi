@@ -30,7 +30,7 @@ type stressResult struct {
 	throughputMBs float64
 }
 
-func runStressTest(b *testing.B, numConns int, dataPerConn int, getBuf func() []byte, putBuf func([]byte)) stressResult {
+func runStressTest(b *testing.B, numConns, dataPerConn int, getBuf func() []byte, putBuf func([]byte)) stressResult {
 	b.Helper()
 
 	// Force GC before measuring
@@ -227,10 +227,10 @@ func BenchmarkStress_TinyPackets(b *testing.B) {
 	}
 
 	type scenario struct {
-		conns      int
-		pktSize    int
+		conns       int
+		pktSize     int
 		pktsPerConn int
-		label      string
+		label       string
 	}
 
 	scenarios := []scenario{

@@ -58,7 +58,7 @@ func makeTLSRecord(payload []byte) []byte {
 }
 
 // makeTLSStream creates a stream of TLS records totaling approximately totalBytes of payload.
-func makeTLSStream(totalBytes int, recordPayloadSize int) []byte {
+func makeTLSStream(totalBytes, recordPayloadSize int) []byte {
 	var buf bytes.Buffer
 	payload := make([]byte, recordPayloadSize)
 	rand.Read(payload)
@@ -543,7 +543,7 @@ func BenchmarkCPU_TLSRelay_StackVsPool(b *testing.B) {
 var sinkByte byte // prevent compiler optimization
 
 // blockingRead simulates a long-lived relay pump with stack buffer.
-func blockingReadStack(wg *sync.WaitGroup, ready chan struct{}, stop chan struct{}) {
+func blockingReadStack(wg *sync.WaitGroup, ready, stop chan struct{}) {
 	defer wg.Done()
 	var buf [tls.MaxRecordPayloadSize]byte
 	sinkByte = buf[0] // ensure buf is used
@@ -553,7 +553,7 @@ func blockingReadStack(wg *sync.WaitGroup, ready chan struct{}, stop chan struct
 }
 
 // blockingReadPool simulates relay pump with pooled buffer.
-func blockingReadPool(wg *sync.WaitGroup, ready chan struct{}, stop chan struct{}, pool *sync.Pool) {
+func blockingReadPool(wg *sync.WaitGroup, ready, stop chan struct{}, pool *sync.Pool) {
 	defer wg.Done()
 	bp := pool.Get().(*[]byte)
 	defer pool.Put(bp)

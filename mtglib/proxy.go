@@ -38,9 +38,9 @@ type Proxy struct {
 	configUpdater               *dc.PublicConfigUpdater
 	doppelGanger                *doppel.Ganger
 
-	stats          *ProxyStats
-	secrets        []Secret
-	secretNames    []string
+	stats           *ProxyStats
+	secrets         []Secret
+	secretNames     []string
 	secretHostnames []string
 	network         Network
 	antiReplayCache AntiReplayCache
@@ -328,7 +328,8 @@ func (p *Proxy) doTelegramCall(ctx *streamContext) error {
 		return fmt.Errorf("cannot parse telegram address %s: %w", foundAddr.Address, err)
 	}
 
-	p.eventStream.Send(ctx,
+	p.eventStream.Send(
+		ctx,
 		NewEventConnectedToDC(ctx.streamID,
 			net.ParseIP(telegramHost),
 			ctx.dc),

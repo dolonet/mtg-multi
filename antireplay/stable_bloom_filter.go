@@ -3,8 +3,8 @@ package antireplay
 import (
 	"sync"
 
-	"github.com/dolonet/mtg-multi/mtglib"
 	"github.com/OneOfOne/xxhash"
+	"github.com/dolonet/mtg-multi/mtglib"
 	boom "github.com/tylertreat/BoomFilters"
 )
 

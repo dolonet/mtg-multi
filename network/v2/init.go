@@ -55,7 +55,6 @@ const (
 	// tcpLingerTimeout defines a number of seconds to wait for sending
 	// unacknowledged data.
 	tcpLingerTimeout = 1
-
 )
 
 // DefaultTCPNotSentLowat is the default value applied to TCP_NOTSENT_LOWAT

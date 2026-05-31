@@ -56,7 +56,8 @@ func (suite *PrometheusTestSuite) TearDownTest() {
 
 func (suite *PrometheusTestSuite) TestTelegramPath() {
 	suite.prometheus.EventStart(
-		mtglib.NewEventStart("connID", net.ParseIP("10.0.0.10")))
+		mtglib.NewEventStart("connID", net.ParseIP("10.0.0.10")),
+	)
 	time.Sleep(100 * time.Millisecond)
 
 	data, err := suite.Get()
@@ -64,7 +65,8 @@ func (suite *PrometheusTestSuite) TestTelegramPath() {
 	suite.Contains(data, `mtg_client_connections{ip_family="ipv4"} 1`)
 
 	suite.prometheus.EventConnectedToDC(
-		mtglib.NewEventConnectedToDC("connID", net.ParseIP("10.0.0.1"), 4))
+		mtglib.NewEventConnectedToDC("connID", net.ParseIP("10.0.0.1"), 4),
+	)
 	time.Sleep(100 * time.Millisecond)
 
 	data, err = suite.Get()
@@ -72,7 +74,8 @@ func (suite *PrometheusTestSuite) TestTelegramPath() {
 	suite.Contains(data, `mtg_telegram_connections{dc="4",telegram_ip="10.0.0.1"} 1`)
 
 	suite.prometheus.EventTraffic(
-		mtglib.NewEventTraffic("connID", 200, true))
+		mtglib.NewEventTraffic("connID", 200, true),
+	)
 	time.Sleep(100 * time.Millisecond)
 
 	data, err = suite.Get()
@@ -80,7 +83,8 @@ func (suite *PrometheusTestSuite) TestTelegramPath() {
 	suite.Contains(data, `mtg_telegram_traffic{dc="4",direction="to_client",telegram_ip="10.0.0.1"} 200`)
 
 	suite.prometheus.EventTraffic(
-		mtglib.NewEventTraffic("connID", 100, false))
+		mtglib.NewEventTraffic("connID", 100, false),
+	)
 	time.Sleep(100 * time.Millisecond)
 
 	data, err = suite.Get()
@@ -98,7 +102,8 @@ func (suite *PrometheusTestSuite) TestTelegramPath() {
 
 func (suite *PrometheusTestSuite) TestDomainFrontingPath() {
 	suite.prometheus.EventStart(
-		mtglib.NewEventStart("connID", net.ParseIP("10.0.0.10")))
+		mtglib.NewEventStart("connID", net.ParseIP("10.0.0.10")),
+	)
 	time.Sleep(100 * time.Millisecond)
 
 	data, err := suite.Get()
@@ -114,7 +119,8 @@ func (suite *PrometheusTestSuite) TestDomainFrontingPath() {
 	suite.Contains(data, `mtg_domain_fronting_connections{ip_family="ipv4"} 1`)
 
 	suite.prometheus.EventTraffic(
-		mtglib.NewEventTraffic("connID", 200, true))
+		mtglib.NewEventTraffic("connID", 200, true),
+	)
 	time.Sleep(100 * time.Millisecond)
 
 	data, err = suite.Get()
@@ -122,7 +128,8 @@ func (suite *PrometheusTestSuite) TestDomainFrontingPath() {
 	suite.Contains(data, `mtg_domain_fronting_traffic{direction="to_client"} 200`)
 
 	suite.prometheus.EventTraffic(
-		mtglib.NewEventTraffic("connID", 100, false))
+		mtglib.NewEventTraffic("connID", 100, false),
+	)
 	time.Sleep(100 * time.Millisecond)
 
 	data, err = suite.Get()
@@ -150,7 +157,8 @@ func (suite *PrometheusTestSuite) TestEventConcurrencyLimited() {
 
 func (suite *PrometheusTestSuite) TestEventIPBlocklisted() {
 	suite.prometheus.EventIPBlocklisted(
-		mtglib.NewEventIPBlocklisted(net.ParseIP("2001:db8::68")))
+		mtglib.NewEventIPBlocklisted(net.ParseIP("2001:db8::68")),
+	)
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -161,7 +169,8 @@ func (suite *PrometheusTestSuite) TestEventIPBlocklisted() {
 
 func (suite *PrometheusTestSuite) TestEventIPAllowlisted() {
 	suite.prometheus.EventIPBlocklisted(
-		mtglib.NewEventIPAllowlisted(net.ParseIP("2001:db8::68")))
+		mtglib.NewEventIPAllowlisted(net.ParseIP("2001:db8::68")),
+	)
 
 	time.Sleep(100 * time.Millisecond)
 

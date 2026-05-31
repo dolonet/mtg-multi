@@ -24,7 +24,8 @@ func (t *TypeBlocklistURI) Set(value string) error {
 		if err != nil {
 			return fmt.Errorf(
 				"value is correct filepath but cannot resolve absolute (%s): %w",
-				value, err)
+				value, err,
+			)
 		}
 
 		t.Value = value

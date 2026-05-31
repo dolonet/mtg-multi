@@ -14,13 +14,13 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/beevik/ntp"
 	"github.com/dolonet/mtg-multi/essentials"
 	"github.com/dolonet/mtg-multi/internal/config"
 	"github.com/dolonet/mtg-multi/internal/utils"
 	"github.com/dolonet/mtg-multi/mtglib"
 	"github.com/dolonet/mtg-multi/mtglib/dcprobe"
 	"github.com/dolonet/mtg-multi/network/v2"
-	"github.com/beevik/ntp"
 )
 
 var (
@@ -71,7 +71,7 @@ var (
 type Doctor struct {
 	conf *config.Config
 
-	ConfigPath      string `kong:"arg,required,type='existingfile',help='Path to the configuration file.',name='config-path'"` //nolint: lll
+	ConfigPath      string `kong:"arg,required,type='existingfile',help='Path to the configuration file.',name='config-path'"`                                                                       //nolint: lll
 	SkipNativeCheck bool   `kong:"help='Skip the native network connectivity check (useful when proxy chaining is configured and direct egress is not expected to work).',name='skip-native-check'"` //nolint: lll
 }
 

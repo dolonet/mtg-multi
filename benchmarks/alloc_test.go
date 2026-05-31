@@ -222,8 +222,8 @@ func TestConnRewindBufferCost(t *testing.T) {
 const ConnectionIDBytesLength = 16
 
 func generateStreamIDHeap() string {
-	connIDBytes := make([]byte, ConnectionIDBytesLength) // heap alloc
-	rand.Read(connIDBytes)                                //nolint: errcheck
+	connIDBytes := make([]byte, ConnectionIDBytesLength)     // heap alloc
+	rand.Read(connIDBytes)                                   //nolint: errcheck
 	return base64.RawURLEncoding.EncodeToString(connIDBytes) // heap alloc
 }
 
