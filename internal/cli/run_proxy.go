@@ -216,72 +216,53 @@ func warnSNIMismatch(conf *config.Config, ntw mtglib.Network, log mtglib.Logger)
 		return
 	}
 
-	addresses, err := net.DefaultResolver.LookupIPAddr(context.Background(), host)
-	if err != nil {
+	res := runSNICheck(context.Background(), net.DefaultResolver, conf, ntw, host)
+
+	if res.ResolveErr != nil {
 		log.BindStr("hostname", host).
-			WarningError("SNI-DNS check: cannot resolve secret hostname", err)
+			WarningError("SNI-DNS check: cannot resolve secret hostname", res.ResolveErr)
 		return
 	}
 
-	ourIP4 := conf.PublicIPv4.Get(nil)
-	if ourIP4 == nil {
-		ourIP4 = getIP(ntw, "tcp4")
-	}
-
-	ourIP6 := conf.PublicIPv6.Get(nil)
-	if ourIP6 == nil {
-		ourIP6 = getIP(ntw, "tcp6")
-	}
-
-	if ourIP4 == nil && ourIP6 == nil {
+	if !res.PublicIPKnown() {
 		log.Warning("SNI-DNS check: cannot detect public IP address; set public-ipv4/public-ipv6 in config or run 'mtg doctor'")
 		return
 	}
 
-	v4Match := ourIP4 == nil
-	v6Match := ourIP6 == nil
-
-	for _, addr := range addresses {
-		if ourIP4 != nil && addr.IP.String() == ourIP4.String() {
-			v4Match = true
-		}
-
-		if ourIP6 != nil && addr.IP.String() == ourIP6.String() {
-			v6Match = true
-		}
-	}
+	v4Match := res.OurIPv4 == nil || res.IPv4Match
+	v6Match := res.OurIPv6 == nil || res.IPv6Match
 
 	if v4Match && v6Match {
 		return
 	}
 
-	resolved := make([]string, 0, len(addresses))
-	for _, addr := range addresses {
-		resolved = append(resolved, addr.IP.String())
+	resolved := make([]string, 0, len(res.Resolved))
+	for _, ip := range res.Resolved {
+		resolved = append(resolved, ip.String())
 	}
 
 	our := ""
-	if ourIP4 != nil {
-		our = ourIP4.String()
+	if res.OurIPv4 != nil {
+		our = res.OurIPv4.String()
 	}
 
-	if ourIP6 != nil {
+	if res.OurIPv6 != nil {
 		if our != "" {
 			our += "/"
 		}
 
-		our += ourIP6.String()
+		our += res.OurIPv6.String()
 	}
 
 	entry := log.BindStr("hostname", host).
 		BindStr("resolved", strings.Join(resolved, ", ")).
 		BindStr("public_ip", our)
 
-	if ourIP4 != nil {
+	if res.OurIPv4 != nil {
 		entry = entry.BindStr("ipv4_match", fmt.Sprintf("%t", v4Match))
 	}
 
-	if ourIP6 != nil {
+	if res.OurIPv6 != nil {
 		entry = entry.BindStr("ipv6_match", fmt.Sprintf("%t", v6Match))
 	}
 

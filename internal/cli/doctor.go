@@ -18,6 +18,7 @@ import (
 	"github.com/dolonet/mtg-multi/internal/config"
 	"github.com/dolonet/mtg-multi/internal/utils"
 	"github.com/dolonet/mtg-multi/mtglib"
+	"github.com/dolonet/mtg-multi/mtglib/dcprobe"
 	"github.com/dolonet/mtg-multi/network/v2"
 	"github.com/beevik/ntp"
 )
@@ -46,7 +47,7 @@ var (
 	)
 
 	tplODCConnect = template.Must(
-		template.New("").Parse("  ✅ DC {{ .dc }}\n"),
+		template.New("").Parse("  ✅ DC {{ .dc }} (rpc {{ .rtt }})\n"),
 	)
 	tplEDCConnect = template.Must(
 		template.New("").Parse("  ❌ DC {{ .dc }}: {{ .error }}\n"),
@@ -56,7 +57,7 @@ var (
 		template.New("").Parse("  ✅ IP address {{ .ip }} matches secret hostname {{ .hostname }}\n"),
 	)
 	tplEDNSSNIMatch = template.Must(
-		template.New("").Parse("  ❌ Hostname {{ .hostname }} {{ if .resolved }}is resolved to {{ .resolved }} addresses, not {{ if .ip4 }}{{ .ip4 }}{{ else }}{{ .ip6 }}{{ end }}{{ else }}cannot be resolved to any host{{ end }}\n"),
+		template.New("").Parse("  ❌ Hostname {{ .hostname }} {{ if .resolved }}resolves to {{ .resolved }}, but the proxy's public IP is {{ if .ip4 }}{{ .ip4 }}{{ else }}<not detected>{{ end }} (IPv4) / {{ if .ip6 }}{{ .ip6 }}{{ else }}<not detected>{{ end }} (IPv6) — none of the resolved addresses match{{ else }}cannot be resolved to any host{{ end }}\n"),
 	)
 
 	tplOFrontingDomain = template.Must(
@@ -238,17 +239,21 @@ func (d *Doctor) checkNetwork(ntw mtglib.Network) bool {
 	dcs := slices.Collect(maps.Keys(essentials.TelegramCoreAddresses))
 	slices.Sort(dcs)
 
-	errs := make([]error, len(dcs))
+	type dcResult struct {
+		rtt time.Duration
+		err error
+	}
+	results := make([]dcResult, len(dcs))
 
 	var wg sync.WaitGroup
 	for i, dc := range dcs {
 		wg.Go(func() {
 			defer func() {
 				if r := recover(); r != nil {
-					errs[i] = fmt.Errorf("panic: %v", r)
+					results[i].err = fmt.Errorf("panic: %v", r)
 				}
 			}()
-			errs[i] = d.checkNetworkAddresses(ntw, essentials.TelegramCoreAddresses[dc])
+			results[i].rtt, results[i].err = d.checkNetworkAddresses(ntw, dc, essentials.TelegramCoreAddresses[dc])
 		})
 	}
 	wg.Wait()
@@ -256,14 +261,15 @@ func (d *Doctor) checkNetwork(ntw mtglib.Network) bool {
 	ok := true
 
 	for i, dc := range dcs {
-		if errs[i] == nil {
+		if results[i].err == nil {
 			tplODCConnect.Execute(os.Stdout, map[string]any{ //nolint: errcheck
-				"dc": dc,
+				"dc":  dc,
+				"rtt": results[i].rtt.Round(time.Microsecond),
 			})
 		} else {
 			tplEDCConnect.Execute(os.Stdout, map[string]any{ //nolint: errcheck
 				"dc":    dc,
-				"error": errs[i],
+				"error": results[i].err,
 			})
 			ok = false
 		}
@@ -272,7 +278,7 @@ func (d *Doctor) checkNetwork(ntw mtglib.Network) bool {
 	return ok
 }
 
-func (d *Doctor) checkNetworkAddresses(ntw mtglib.Network, addresses []string) error {
+func (d *Doctor) checkNetworkAddresses(ntw mtglib.Network, dc int, addresses []string) (time.Duration, error) {
 	checkAddresses := []string{}
 
 	switch d.conf.PreferIP.Get("prefer-ip4") {
@@ -303,29 +309,33 @@ func (d *Doctor) checkNetworkAddresses(ntw mtglib.Network, addresses []string) e
 	}
 
 	if len(checkAddresses) == 0 {
-		return fmt.Errorf("no suitable addresses after IP version filtering")
+		return 0, fmt.Errorf("no suitable addresses after IP version filtering")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	var (
-		conn net.Conn
-		err  error
-	)
+	var lastErr error
 
 	for _, addr := range checkAddresses {
-		conn, err = ntw.DialContext(ctx, "tcp", addr)
+		conn, err := ntw.DialContext(ctx, "tcp", addr)
 		if err != nil {
+			lastErr = fmt.Errorf("tcp connect to %s: %w", addr, err)
 			continue
 		}
 
+		rtt, err := dcprobe.Probe(ctx, conn, dc)
 		conn.Close() //nolint: errcheck
 
-		return nil
+		if err != nil {
+			lastErr = fmt.Errorf("rpc handshake to %s: %w", addr, err)
+			continue
+		}
+
+		return rtt, nil
 	}
 
-	return err
+	return 0, lastErr
 }
 
 func (d *Doctor) getFirstSecretHost() string {
@@ -369,26 +379,19 @@ func (d *Doctor) checkFrontingDomain(ntw mtglib.Network) bool {
 }
 
 func (d *Doctor) checkSecretHost(resolver *net.Resolver, ntw mtglib.Network) bool {
-	addresses, err := resolver.LookupIPAddr(context.Background(), d.getFirstSecretHost())
-	if err != nil {
+	host := d.getFirstSecretHost()
+
+	res := runSNICheck(context.Background(), resolver, d.conf, ntw, host)
+
+	if res.ResolveErr != nil {
 		tplError.Execute(os.Stdout, map[string]any{ //nolint: errcheck
-			"description": fmt.Sprintf("cannot resolve DNS name of %s", d.getFirstSecretHost()),
-			"error":       err,
+			"description": fmt.Sprintf("cannot resolve DNS name of %s", host),
+			"error":       res.ResolveErr,
 		})
 		return false
 	}
 
-	ourIP4 := d.conf.PublicIPv4.Get(nil)
-	if ourIP4 == nil {
-		ourIP4 = getIP(ntw, "tcp4")
-	}
-
-	ourIP6 := d.conf.PublicIPv6.Get(nil)
-	if ourIP6 == nil {
-		ourIP6 = getIP(ntw, "tcp6")
-	}
-
-	if ourIP4 == nil && ourIP6 == nil {
+	if !res.PublicIPKnown() {
 		tplError.Execute(os.Stdout, map[string]any{ //nolint: errcheck
 			"description": "cannot detect public IP address",
 			"error":       errors.New("cannot detect automatically and public-ipv4/public-ipv6 are not set in config"),
@@ -396,25 +399,34 @@ func (d *Doctor) checkSecretHost(resolver *net.Resolver, ntw mtglib.Network) boo
 		return false
 	}
 
-	strAddresses := []string{}
-	for _, value := range addresses {
-		if (ourIP4 != nil && value.IP.String() == ourIP4.String()) ||
-			(ourIP6 != nil && value.IP.String() == ourIP6.String()) {
-			tplODNSSNIMatch.Execute(os.Stdout, map[string]any{ //nolint: errcheck
-				"ip":       value.IP,
-				"hostname": d.getFirstSecretHost(),
-			})
-			return true
+	if res.IPv4Match || res.IPv6Match {
+		var matched net.IP
+
+		for _, ip := range res.Resolved {
+			if (res.OurIPv4 != nil && ip.String() == res.OurIPv4.String()) ||
+				(res.OurIPv6 != nil && ip.String() == res.OurIPv6.String()) {
+				matched = ip
+				break
+			}
 		}
 
-		strAddresses = append(strAddresses, `"`+value.IP.String()+`"`)
+		tplODNSSNIMatch.Execute(os.Stdout, map[string]any{ //nolint: errcheck
+			"ip":       matched,
+			"hostname": host,
+		})
+		return true
+	}
+
+	strAddresses := make([]string, 0, len(res.Resolved))
+	for _, ip := range res.Resolved {
+		strAddresses = append(strAddresses, `"`+ip.String()+`"`)
 	}
 
 	tplEDNSSNIMatch.Execute(os.Stdout, map[string]any{ //nolint: errcheck
-		"hostname": d.getFirstSecretHost(),
+		"hostname": host,
 		"resolved": strings.Join(strAddresses, ", "),
-		"ip4":      ourIP4,
-		"ip6":      ourIP6,
+		"ip4":      res.OurIPv4,
+		"ip6":      res.OurIPv6,
 	})
 
 	return false
