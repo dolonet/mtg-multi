@@ -453,6 +453,45 @@ enabled = false
 # handshake timeout.
 frame-timeout = "2s"
 
+# Warm pool of connections to Telegram DCs. When enabled, mtg keeps a few
+# connections to every DC already dialed and handshaked, so a client
+# connection does not wait for a cold dial and does not hit the Telegram
+# client backoff when the route to a DC flaps. A pooled connection is checked
+# before it is handed out, and dead ones are replaced. Note that the pool keeps
+# connections to Telegram open even when there are no clients.
+#
+# The pool is refilled every 7 seconds, not right after a connection is handed
+# out. Under steady load only about `size` connections per DC per 7 seconds
+# get a warm connection, the rest dial cold as usual. So this is mostly a
+# feature for bursts (many clients reconnecting at once) and for route flaps,
+# not a way to make every connection warm. A miss is never worse than running
+# without the pool.
+#
+# If a DC keeps failing (no route, broken upstream proxy), its filler backs off
+# exponentially, from 14 seconds up to 2 minutes between attempts, so a sick
+# DC or a SOCKS5 upstream is not hammered (failed dials count towards the
+# circuit breaker of the upstream).
+#
+# Results are exported as the dc_pool metric (labels dc and result: hit,
+# miss, stale, dead, expired, dial_ok, dial_fail). Only DCs from `dcs` are
+# reported; connections to any other DC dial cold and are not counted.
+[dc-pool]
+# Disabled by default.
+enabled = false
+# Warm connections per DC, at most 64.
+size = 2
+# DCs to keep warm, as the signed DC ids clients ask for: 1..5 are the regular
+# DCs, negative ids are media DCs (-2 is the media DC of DC 2, it uses the same
+# addresses but a different handshake), 203 is the CDN DC. Each DC is pooled
+# separately, so warming 2 does not help -2. Defaults to the regular DCs only.
+#
+# Check the dc label of the telegram_connections metric to see where clients
+# actually go. For example, on a proxy whose traffic mostly goes to -2, 203, 2
+# and -4 something like this makes sense:
+#   dcs = [1, 2, 3, 4, 5, -2, -4, 203]
+# Every extra DC costs `size` idle connections to Telegram.
+dcs = [1, 2, 3, 4, 5]
+
 # statsd statistics integration.
 [stats.statsd]
 # enabled/disabled

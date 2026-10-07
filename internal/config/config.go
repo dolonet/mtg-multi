@@ -91,6 +91,12 @@ type Config struct {
 
 		FrameTimeout TypeDuration `json:"frameTimeout"`
 	} `json:"secured"`
+	DCPool struct {
+		Optional
+
+		Size TypeConcurrency `json:"size"`
+		DCs  []int           `json:"dcs"`
+	} `json:"dcPool"`
 	Stats struct {
 		StatsD struct {
 			Optional
@@ -171,6 +177,10 @@ func (c *Config) Validate() error {
 		}
 
 		seen[v] = struct{}{}
+	}
+
+	if err := mtglib.ValidateDCPool(c.DCPool.Size.Get(0), c.DCPool.DCs); err != nil {
+		return fmt.Errorf("incorrect dc-pool section: %w", err)
 	}
 
 	return nil
