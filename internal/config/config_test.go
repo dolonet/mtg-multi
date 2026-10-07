@@ -195,6 +195,38 @@ func (suite *ConfigTestSuite) TestSecured() {
 	suite.Equal(1500*time.Millisecond, conf.Secured.FrameTimeout.Get(0))
 }
 
+func (suite *ConfigTestSuite) TestWeb() {
+	conf, err := config.Parse(suite.ReadConfig("web.toml"))
+	suite.NoError(err)
+	suite.NoError(conf.Validate())
+	suite.Equal("127.0.0.1:18080", conf.Web.BindTo)
+	suite.Equal("proxy.example.com", conf.Web.Host)
+	suite.Equal("plain", conf.Web.SecretMode)
+	suite.Equal("/var/www/decoy", conf.Web.DecoyDir)
+	suite.EqualValues(100, conf.Web.MaxSessions.Get(0))
+	suite.EqualValues(200, conf.Web.MaxPending.Get(0))
+	suite.EqualValues(4, conf.Web.MaxSessionsPerUser.Get(0))
+	suite.EqualValues(8, conf.Web.MaxPendingPerUser.Get(0))
+	suite.True(conf.Web.Diag.Get(false))
+}
+
+// The WEB listener speaks plain HTTP, so it must never be exposed, and the
+// rest of the section is checked only when the mode is enabled.
+func (suite *ConfigTestSuite) TestWebInvalid() {
+	for _, name := range []string{"web_public_bind.toml", "web_no_host.toml", "web_bad_mode.toml"} {
+		conf, err := config.Parse(suite.ReadConfig(name))
+		suite.NoError(err, name)
+		suite.Error(conf.Validate(), name)
+	}
+}
+
+func (suite *ConfigTestSuite) TestWebDisabledByDefault() {
+	conf, err := config.Parse(suite.ReadConfig("minimal.toml"))
+	suite.NoError(err)
+	suite.Empty(conf.Web.BindTo)
+	suite.NoError(conf.Validate())
+}
+
 func TestConfig(t *testing.T) {
 	t.Parallel()
 	suite.Run(t, &ConfigTestSuite{})

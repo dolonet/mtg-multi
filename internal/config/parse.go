@@ -82,6 +82,17 @@ type tomlConfig struct {
 		MaxConnections uint   `toml:"max-connections" json:"maxConnections,omitempty"`
 		CheckInterval  string `toml:"check-interval" json:"checkInterval,omitempty"`
 	} `toml:"throttle" json:"throttle,omitempty"`
+	Web struct {
+		BindTo             string `toml:"bind-to" json:"bindTo,omitempty"`
+		Host               string `toml:"host" json:"host,omitempty"`
+		SecretMode         string `toml:"secret-mode" json:"secretMode,omitempty"`
+		DecoyDir           string `toml:"decoy-dir" json:"decoyDir,omitempty"`
+		MaxSessions        uint   `toml:"max-sessions" json:"maxSessions,omitempty"`
+		MaxPending         uint   `toml:"max-pending" json:"maxPending,omitempty"`
+		MaxSessionsPerUser uint   `toml:"max-sessions-per-user" json:"maxSessionsPerUser,omitempty"`
+		MaxPendingPerUser  uint   `toml:"max-pending-per-user" json:"maxPendingPerUser,omitempty"`
+		Diag               bool   `toml:"diag" json:"diag,omitempty"`
+	} `toml:"web" json:"web,omitempty"`
 	Secured struct {
 		Enabled      bool   `toml:"enabled" json:"enabled,omitempty"`
 		FrameTimeout string `toml:"frame-timeout" json:"frameTimeout,omitempty"`

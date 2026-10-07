@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -341,6 +342,13 @@ func runProxy(conf *config.Config, version string) error { //nolint: funlen, cyc
 		SecuredFrameTimeout:     conf.Secured.FrameTimeout.Get(0),
 	}
 
+	// The [web] section is parsed and validated, but the WEB listener itself
+	// (package web) is added separately. Refuse to start rather than silently
+	// run without the mode the config asks for.
+	if strings.TrimSpace(conf.Web.BindTo) != "" {
+		return errWebUnavailable
+	}
+
 	proxy, err := mtglib.NewProxy(opts)
 	if err != nil {
 		return fmt.Errorf("cannot create a proxy: %w", err)
@@ -422,3 +430,7 @@ func waitAndShutdown(ctx context.Context, serveErr <-chan error, stop func()) er
 
 	return nil
 }
+
+// errWebUnavailable is returned when the config enables the WEB mode in a
+// build that does not have it.
+var errWebUnavailable = errors.New("[web] is configured, but this build has no WEB mode support")
