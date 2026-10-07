@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dolonet/mtg-multi/essentials"
+	"github.com/dolonet/mtg-multi/internal/logthrottle"
 	"github.com/dolonet/mtg-multi/mtglib/internal/dc"
 	"github.com/dolonet/mtg-multi/mtglib/internal/doppel"
 	"github.com/dolonet/mtg-multi/mtglib/internal/relay"
@@ -21,6 +22,11 @@ import (
 	"github.com/dolonet/mtg-multi/mtglib/obfuscation"
 	"github.com/panjf2000/ants/v2"
 )
+
+// pendingHandshakesLogInterval limits the log line about connections rejected
+// by the per-IP pending-handshake limit: one line per interval, with the number
+// of suppressed ones.
+const pendingHandshakesLogInterval = 10 * time.Second
 
 // Proxy is an MTPROTO proxy structure.
 type Proxy struct {
@@ -34,6 +40,7 @@ type Proxy struct {
 	pendingHandshakesDryRun     bool
 	securedEnabled              bool
 	securedFrameTimeout         time.Duration
+	pendingHandshakesLog        *logthrottle.Throttle
 	tolerateTimeSkewness        time.Duration
 	idleTimeout                 time.Duration
 	handshakeTimeout            time.Duration
@@ -112,7 +119,11 @@ func (p *Proxy) ServeConn(conn essentials.Conn) {
 	}
 
 	if !admitted {
-		ctx.logger.Info("too many pending handshakes from this ip")
+		// Under a flood every connection is rejected here: the event above
+		// counts each of them, the log line is rate limited.
+		if ok, suppressed := p.pendingHandshakesLog.Allow(); ok {
+			ctx.logger.BindInt("suppressed", suppressed).Info("too many pending handshakes from this ip")
+		}
 
 		return
 	}
@@ -624,6 +635,7 @@ func NewProxy(opts ProxyOpts) (*Proxy, error) {
 		pendingHandshakesDryRun:  opts.PendingHandshakesDryRun,
 		securedEnabled:           opts.SecuredEnabled,
 		securedFrameTimeout:      opts.getSecuredFrameTimeout(),
+		pendingHandshakesLog:     logthrottle.New(pendingHandshakesLogInterval),
 		telegram:                 tg,
 		doppelGanger: doppel.NewGanger(
 			ctx,

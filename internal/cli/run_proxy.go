@@ -350,7 +350,7 @@ func runProxy(conf *config.Config, version string) error { //nolint: funlen, cyc
 	listeners := make([]net.Listener, 0, len(bindAddrs))
 
 	for _, addr := range bindAddrs {
-		l, err := utils.NewListener(addr, 0)
+		l, err := utils.NewListener(addr, 0, logger.Named("listener"))
 		if err != nil {
 			for _, prev := range listeners {
 				prev.Close() //nolint: errcheck

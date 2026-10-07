@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dolonet/mtg-multi/internal/utils"
+	"github.com/dolonet/mtg-multi/mtglib"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -228,6 +229,100 @@ func (suite *MultiListenerTestSuite) TestTemporaryErrorDoesNotStopListener() {
 	}
 }
 
+// failingListener fails every Accept with a temporary error until it is
+// closed and counts the calls.
+type failingListener struct {
+	net.Listener
+
+	calls  atomic.Int32
+	closed atomic.Bool
+}
+
+func (l *failingListener) Accept() (net.Conn, error) {
+	l.calls.Add(1)
+
+	if l.closed.Load() {
+		return nil, net.ErrClosed
+	}
+
+	return nil, syscall.EMFILE
+}
+
+func (l *failingListener) Close() error {
+	l.closed.Store(true)
+
+	return l.Listener.Close() //nolint: wrapcheck
+}
+
+func (suite *MultiListenerTestSuite) newFailingMultiListener() (*utils.MultiListener, *failingListener) {
+	base, err := net.Listen("tcp", "127.0.0.1:0")
+	suite.Require().NoError(err)
+
+	failing := &failingListener{Listener: base}
+	ml := utils.NewMultiListener(failing)
+
+	suite.T().Cleanup(func() {
+		ml.Close() //nolint: errcheck
+
+		// Drain until the accept loop reports the closed listener and exits.
+		deadline := time.After(2 * time.Second)
+
+		for {
+			result := make(chan error, 1)
+
+			go func() {
+				_, err := ml.Accept()
+				result <- err
+			}()
+
+			select {
+			case err := <-result:
+				if errors.Is(err, net.ErrClosed) {
+					return
+				}
+			case <-deadline:
+				return
+			}
+		}
+	})
+
+	return ml, failing
+}
+
+// MultiListener must not pause after a temporary error: the consumer
+// (Proxy.Serve) owns the retry pause, and pausing in both places applied the
+// delay twice.
+func (suite *MultiListenerTestSuite) TestTemporaryErrorsAreForwardedWithoutPause() {
+	ml, _ := suite.newFailingMultiListener()
+
+	const errorsToRead = 8
+
+	start := time.Now()
+
+	for range errorsToRead {
+		_, err := ml.Accept()
+		suite.Require().ErrorIs(err, syscall.EMFILE)
+	}
+
+	// With a pause of 5ms doubling on each error inside MultiListener, reading
+	// 8 errors took at least 5+10+...+320 = 635ms.
+	suite.Less(time.Since(start), 300*time.Millisecond)
+}
+
+// Without its own pause the accept loop must still not spin: it retries
+// Accept only as fast as the consumer takes the results.
+func (suite *MultiListenerTestSuite) TestTemporaryErrorsDoNotSpin() {
+	ml, failing := suite.newFailingMultiListener()
+
+	_, err := ml.Accept()
+	suite.Require().ErrorIs(err, syscall.EMFILE)
+
+	time.Sleep(100 * time.Millisecond)
+
+	// One result taken, one in the channel buffer, one blocked on send.
+	suite.LessOrEqual(failing.calls.Load(), int32(3))
+}
+
 func TestMultiListener(t *testing.T) {
 	t.Parallel()
 	suite.Run(t, &MultiListenerTestSuite{})
@@ -264,7 +359,9 @@ func TestListenerSkipsConnectionWithBrokenSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	listener := utils.Listener{Listener: &firstConnBroken{Listener: base}}
+	log := &recordingLogger{}
+
+	listener := utils.WrapListener(&firstConnBroken{Listener: base}, log)
 	defer listener.Close() //nolint: errcheck
 
 	for range 2 {
@@ -296,4 +393,122 @@ func TestListenerSkipsConnectionWithBrokenSocket(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Accept did not return the next connection")
 	}
+
+	// The skipped connection must not vanish silently.
+	if warnings := log.warnings(); len(warnings) != 1 {
+		t.Fatalf("expected one warning about the skipped connection, got %v", warnings)
+	}
+}
+
+// brokenConns returns only already closed TCP connections: setting socket
+// options fails on every one of them.
+type brokenConns struct {
+	net.Listener
+
+	calls atomic.Int32
+}
+
+func (l *brokenConns) Accept() (net.Conn, error) {
+	l.calls.Add(1)
+
+	conn, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err //nolint: wrapcheck
+	}
+
+	conn.Close() //nolint: errcheck
+
+	return conn, nil
+}
+
+// If setting socket options fails for every connection, the warning must be
+// rate limited instead of written per connection.
+func TestListenerRateLimitsSkipWarning(t *testing.T) {
+	t.Parallel()
+
+	base, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	log := &recordingLogger{}
+	broken := &brokenConns{Listener: base}
+
+	listener := utils.WrapListener(broken, log)
+
+	const conns = 10
+
+	var dialed sync.WaitGroup
+
+	for range conns {
+		dialed.Go(func() {
+			conn, err := net.Dial("tcp", base.Addr().String())
+			if err == nil {
+				conn.Close() //nolint: errcheck
+			}
+		})
+	}
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		listener.Accept() //nolint: errcheck
+	}()
+
+	dialed.Wait()
+
+	// The listener has skipped every connection once it asks for one more.
+	deadline := time.Now().Add(2 * time.Second)
+
+	for broken.calls.Load() <= conns && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	listener.Close() //nolint: errcheck
+	<-done
+
+	if got := broken.calls.Load(); got <= conns {
+		t.Fatalf("expected %d skipped connections, got %d", conns, got-1)
+	}
+
+	if warnings := log.warnings(); len(warnings) != 1 {
+		t.Fatalf("expected one rate-limited warning for %d skipped connections, got %v", conns, warnings)
+	}
+}
+
+// recordingLogger records warnings.
+type recordingLogger struct {
+	mu   sync.Mutex
+	msgs []string
+}
+
+func (l *recordingLogger) Named(_ string) mtglib.Logger          { return l }
+func (l *recordingLogger) BindInt(_ string, _ int) mtglib.Logger { return l }
+func (l *recordingLogger) BindStr(_, _ string) mtglib.Logger     { return l }
+func (l *recordingLogger) BindJSON(_, _ string) mtglib.Logger    { return l }
+func (l *recordingLogger) Printf(_ string, _ ...any)             {}
+func (l *recordingLogger) Info(_ string)                         {}
+func (l *recordingLogger) InfoError(_ string, _ error)           {}
+func (l *recordingLogger) Warning(msg string)                    { l.record(msg) }
+func (l *recordingLogger) Debug(_ string)                        {}
+func (l *recordingLogger) DebugError(_ string, _ error)          {}
+
+func (l *recordingLogger) WarningError(msg string, err error) {
+	l.record(msg + ": " + err.Error())
+}
+
+func (l *recordingLogger) record(msg string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	l.msgs = append(l.msgs, msg)
+}
+
+func (l *recordingLogger) warnings() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return append([]string(nil), l.msgs...)
 }
