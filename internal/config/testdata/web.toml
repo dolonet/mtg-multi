@@ -1,0 +1,13 @@
+secret = "7oe1GqLy6TBc38CV3jx7q09nb29nbGUuY29t"
+bind-to = "0.0.0.0:3128"
+
+[web]
+bind-to = "127.0.0.1:18080"
+host = "proxy.example.com"
+secret-mode = "plain"
+decoy-dir = "/var/www/decoy"
+max-sessions = 100
+max-pending = 200
+max-sessions-per-user = 4
+max-pending-per-user = 8
+diag = true

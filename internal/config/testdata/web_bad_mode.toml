@@ -1,0 +1,7 @@
+secret = "7oe1GqLy6TBc38CV3jx7q09nb29nbGUuY29t"
+bind-to = "0.0.0.0:3128"
+
+[web]
+bind-to = "[::1]:18080"
+host = "proxy.example.com"
+secret-mode = "ee"

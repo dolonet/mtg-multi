@@ -453,6 +453,41 @@ enabled = false
 # handshake timeout.
 frame-timeout = "2s"
 
+# WEB mode: MTProto inside a real HTTPS session, compatible with the WEB proxy
+# type of Telegram Desktop (tg://webproxy links). mtg listens for plain HTTP on
+# loopback; a reverse proxy (nginx, Caddy) in front of it terminates TLS with a
+# real certificate and passes requests for the WEB domain. Everyone who is not
+# a client of this proxy gets the static decoy site. Users and secrets are the
+# same as for regular MTProto; the link is different.
+#
+# Streams inside WEB use the secured (obfuscated2) handshake. It is accepted for
+# WEB streams only and does not make the FakeTLS listener accept dd clients.
+[web]
+# Empty (default) disables the WEB mode. Must be a loopback address.
+bind-to = ""
+# Domain from the tg://webproxy link, served by the reverse proxy.
+host = ""
+# Key kind in the link: dd (default) or plain.
+secret-mode = "dd"
+# Static site for everyone else, served like nginx serves static files (no
+# listings, no dotfiles, no symlinks out of the directory). It must exist.
+# Empty answers every page with the nginx 404 page.
+decoy-dir = ""
+# The client address comes from X-Forwarded-For, which the reverse proxy must
+# set to exactly one address (nginx: proxy_set_header X-Forwarded-For
+# $remote_addr). Requests without a usable header are refused and logged.
+#
+# Caps on live sessions and on bridge tokens not used yet, in total and per
+# user. A session costs about 10 MB at worst, usually far less. Past the
+# per-user cap, the user's oldest session or token gives way to the new one.
+max-sessions = 512
+max-pending = 2048
+max-sessions-per-user = 4
+max-pending-per-user = 8
+# Log diagnostic marks from the bridge page (at most 20 a second, 256 bytes
+# each, only from holders of a live token). For troubleshooting only.
+diag = false
+
 # statsd statistics integration.
 [stats.statsd]
 # enabled/disabled

@@ -180,6 +180,61 @@ func (p *Proxy) ServeConn(conn essentials.Conn) {
 	)
 }
 
+// ServeStream runs a stream that did not come from the proxy listener (a
+// WEB-mode logical stream) through the same admission as a regular
+// connection: IP allowlist/blocklist and the worker pool with its concurrency
+// limit. Without it WEB streams bypassed both.
+func (p *Proxy) ServeStream(conn essentials.Conn) {
+	p.dispatch(conn)
+}
+
+// dispatch applies IP allowlist/blocklist and hands the connection to the
+// worker pool. It returns false only when the pool is closed.
+func (p *Proxy) dispatch(conn net.Conn) bool {
+	ipAddr := remoteIP(conn)
+	logger := p.logger.BindStr("ip", ipAddr.String())
+
+	if !p.allowlist.Contains(ipAddr) {
+		conn.Close() //nolint: errcheck
+		logger.Info("ip was rejected by allowlist")
+		p.eventStream.Send(p.ctx, NewEventIPAllowlisted(ipAddr))
+
+		return true
+	}
+
+	if p.blocklist.Contains(ipAddr) {
+		conn.Close() //nolint: errcheck
+		logger.Info("ip was blacklisted")
+		p.eventStream.Send(p.ctx, NewEventIPBlocklisted(ipAddr))
+
+		return true
+	}
+
+	err := p.workerPool.Invoke(conn)
+
+	switch {
+	case err == nil:
+	case errors.Is(err, ants.ErrPoolClosed):
+		conn.Close() //nolint: errcheck
+
+		return false
+	case errors.Is(err, ants.ErrPoolOverload):
+		conn.Close() //nolint: errcheck
+		logger.Info("connection was concurrency limited")
+		p.eventStream.Send(p.ctx, NewEventConcurrencyLimited())
+	}
+
+	return true
+}
+
+func remoteIP(conn net.Conn) net.IP {
+	if addr, ok := conn.RemoteAddr().(*net.TCPAddr); ok {
+		return addr.IP
+	}
+
+	return net.IPv4zero
+}
+
 // Serve starts a proxy on a given listener.
 func (p *Proxy) Serve(listener net.Listener) error {
 	p.streamWaitGroup.Add(1)
@@ -196,35 +251,8 @@ func (p *Proxy) Serve(listener net.Listener) error {
 			}
 		}
 
-		ipAddr := conn.RemoteAddr().(*net.TCPAddr).IP //nolint: forcetypeassert
-		logger := p.logger.BindStr("ip", ipAddr.String())
-
-		if !p.allowlist.Contains(ipAddr) {
-			conn.Close() //nolint: errcheck
-			logger.Info("ip was rejected by allowlist")
-			p.eventStream.Send(p.ctx, NewEventIPAllowlisted(ipAddr))
-
-			continue
-		}
-
-		if p.blocklist.Contains(ipAddr) {
-			conn.Close() //nolint: errcheck
-			logger.Info("ip was blacklisted")
-			p.eventStream.Send(p.ctx, NewEventIPBlocklisted(ipAddr))
-
-			continue
-		}
-
-		err = p.workerPool.Invoke(conn)
-
-		switch {
-		case err == nil:
-		case errors.Is(err, ants.ErrPoolClosed):
+		if !p.dispatch(conn) {
 			return nil
-		case errors.Is(err, ants.ErrPoolOverload):
-			conn.Close() //nolint: errcheck
-			logger.Info("connection was concurrency limited")
-			p.eventStream.Send(p.ctx, NewEventConcurrencyLimited())
 		}
 	}
 }
@@ -251,7 +279,7 @@ func (p *Proxy) doFakeTLSHandshake(ctx *streamContext) bool {
 		secretKeys[i] = p.secrets[i].Key[:]
 	}
 
-	if p.securedEnabled {
+	if p.securedEnabled || isSecuredTransport(ctx.clientConn) {
 		// Classify the transport before invoking a parser. A TLS ClientHello with
 		// an invalid HMAC is an active probe and must reach the mask host byte for
 		// byte; parsing its first 64 bytes as a secured handshake would consume and
@@ -333,6 +361,27 @@ func (p *Proxy) doFakeTLSHandshake(ctx *streamContext) bool {
 	return true
 }
 
+// SecuredTransport is implemented by connections whose outer transport is not
+// FakeTLS and that carry plain obfuscated2 by design, such as WEB-mode streams
+// (MTProto inside a real HTTPS session). The secured handshake is accepted for
+// them even when ProxyOpts.SecuredEnabled is off, so enabling the WEB mode does
+// not make the FakeTLS listener accept dd clients.
+//
+// The check is a plain type assertion on the connection handed to the worker
+// pool, which ServeConn keeps as ctx.clientConn up to the handshake, so the
+// stream type itself must implement this interface: a wrapper (for example
+// essentials.WrapNetConn) hides the method, and such a stream is then parsed
+// as FakeTLS and rejected, which is safe but confusing.
+type SecuredTransport interface {
+	SecuredTransport() bool
+}
+
+func isSecuredTransport(conn essentials.Conn) bool {
+	st, ok := conn.(SecuredTransport)
+
+	return ok && st.SecuredTransport()
+}
+
 // isFakeTLSHandshake reports whether the first bytes look like a TLS 1.x
 // ClientHello record (handshake type, version 3.1), which is what FakeTLS
 // clients send.
@@ -391,6 +440,20 @@ func (p *Proxy) readSecuredFrame(
 	rewind *connRewind,
 	secretKeys [][]byte,
 ) (int, int, essentials.Conn, []byte, error) {
+	// A secured transport (a WEB stream) is not reachable by probes: the
+	// client got through the capability check of the HTTPS frontend first.
+	// Its frame may also arrive in a later /up request than the stream OPEN,
+	// so the short deadline would only break slow legitimate clients. It
+	// keeps the whole handshake deadline.
+	if isSecuredTransport(ctx.clientConn) {
+		idx, dcIdx, cn, replayKey, err := obfuscation.ReadHandshakeMulti(rewind, secretKeys)
+		if err != nil {
+			return -1, 0, nil, nil, fmt.Errorf("cannot read secured handshake: %w", err)
+		}
+
+		return idx, dcIdx, cn, replayKey, nil
+	}
+
 	deadline := time.Now().Add(p.securedFrameTimeout)
 	if !ctx.handshakeDeadline.IsZero() && ctx.handshakeDeadline.Before(deadline) {
 		deadline = ctx.handshakeDeadline

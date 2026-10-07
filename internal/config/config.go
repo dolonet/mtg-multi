@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
+	"strings"
 
 	"github.com/dolonet/mtg-multi/mtglib"
 )
@@ -86,6 +88,17 @@ type Config struct {
 		MaxConnections TypeConcurrency `json:"maxConnections"`
 		CheckInterval  TypeDuration    `json:"checkInterval"`
 	} `json:"throttle"`
+	Web struct {
+		BindTo             string          `json:"bindTo"`
+		Host               string          `json:"host"`
+		SecretMode         string          `json:"secretMode"`
+		DecoyDir           string          `json:"decoyDir"`
+		MaxSessions        TypeConcurrency `json:"maxSessions"`
+		MaxPending         TypeConcurrency `json:"maxPending"`
+		MaxSessionsPerUser TypeConcurrency `json:"maxSessionsPerUser"`
+		MaxPendingPerUser  TypeConcurrency `json:"maxPendingPerUser"`
+		Diag               TypeBool        `json:"diag"`
+	} `json:"web"`
 	Secured struct {
 		Optional
 
@@ -171,6 +184,39 @@ func (c *Config) Validate() error {
 		}
 
 		seen[v] = struct{}{}
+	}
+
+	return c.validateWeb()
+}
+
+// validateWeb checks the [web] section. An empty bind-to disables the WEB
+// mode, and then nothing else in the section matters.
+func (c *Config) validateWeb() error {
+	bind := strings.TrimSpace(c.Web.BindTo)
+	if bind == "" {
+		return nil
+	}
+
+	host, _, err := net.SplitHostPort(bind)
+	if err != nil {
+		return fmt.Errorf("incorrect web.bind-to %q: %w", bind, err)
+	}
+
+	// The WEB listener speaks plain HTTP: TLS is terminated by a reverse proxy
+	// on the same machine. Exposed directly, it would be a proxy without any
+	// encryption or masking.
+	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("incorrect web.bind-to %q: must be a loopback address", bind)
+	}
+
+	if strings.TrimSpace(c.Web.Host) == "" {
+		return fmt.Errorf("web.host is required when web.bind-to is set")
+	}
+
+	switch strings.ToLower(strings.TrimSpace(c.Web.SecretMode)) {
+	case "", "dd", "plain":
+	default:
+		return fmt.Errorf("incorrect web.secret-mode %q: must be dd or plain", c.Web.SecretMode)
 	}
 
 	return nil

@@ -190,3 +190,90 @@ func TestDoSecuredHandshakeReplay(t *testing.T) {
 		t.Fatal("the fronting replay must carry the original handshake bytes")
 	}
 }
+
+type securedStub struct {
+	essentials.Conn
+
+	secured bool
+}
+
+func (s securedStub) SecuredTransport() bool { return s.secured }
+
+// WEB streams mark themselves as secured transport: the dd handshake is
+// accepted for them without enabling it on the FakeTLS listener.
+func TestIsSecuredTransport(t *testing.T) {
+	t.Parallel()
+
+	if !isSecuredTransport(securedStub{secured: true}) {
+		t.Fatal("a connection that reports SecuredTransport must be recognized")
+	}
+
+	if isSecuredTransport(securedStub{secured: false}) {
+		t.Fatal("SecuredTransport() == false must not enable the secured handshake")
+	}
+
+	if isSecuredTransport(essentials.WrapNetConn(nil)) {
+		t.Fatal("a regular connection must not be a secured transport")
+	}
+}
+
+// A WEB stream (secured transport) keeps the whole handshake deadline: its
+// 64-byte frame may come in a later HTTP request than the stream OPEN, and the
+// short frame timeout meant for probes on the listener must not cut it off.
+func TestReadSecuredFrameSkipsShortTimeoutForSecuredTransport(t *testing.T) {
+	t.Parallel()
+
+	secret := GenerateSecret("example.com")
+	proxy := &Proxy{
+		ctx:                 context.Background(),
+		secrets:             []Secret{secret},
+		secretNames:         []string{"main"},
+		antiReplayCache:     &mapAntiReplayCache{seen: map[string]bool{}},
+		eventStream:         &countingEventStream{},
+		logger:              NoopLogger{},
+		securedFrameTimeout: 50 * time.Millisecond,
+	}
+
+	rec := &recordingConn{}
+	if _, err := (obfuscation.Obfuscator{Secret: secret.Key[:]}).SendHandshake(rec, 2); err != nil {
+		t.Fatal(err)
+	}
+
+	frame := rec.buf.Bytes()
+
+	delayed := func(secured bool) error {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer listener.Close() //nolint: errcheck
+
+		client, err := net.Dial("tcp", listener.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer client.Close() //nolint: errcheck
+
+		server, err := listener.Accept()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer server.Close() //nolint: errcheck
+
+		time.AfterFunc(200*time.Millisecond, func() { client.Write(frame) }) //nolint: errcheck
+
+		conn := securedStub{Conn: essentials.WrapNetConn(server), secured: secured}
+		ctx := newStreamContext(context.Background(), NoopLogger{}, conn)
+		ctx.handshakeDeadline = time.Now().Add(5 * time.Second)
+
+		return proxy.doSecuredHandshake(ctx, newConnRewind(ctx.clientConn))
+	}
+
+	if err := delayed(true); err != nil {
+		t.Fatalf("a secured transport must wait for its frame: %v", err)
+	}
+
+	if err := delayed(false); err == nil {
+		t.Fatal("a listener connection must still get the short frame timeout")
+	}
+}
