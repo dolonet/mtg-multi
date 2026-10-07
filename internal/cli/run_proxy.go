@@ -304,6 +304,8 @@ func runProxy(conf *config.Config, version string) error { //nolint: funlen, cyc
 		doppelGangerURLs[i] = v.String()
 	}
 
+	serverHelloMSS, listenerMSS := clientMSSPlan(conf, logger)
+
 	opts := mtglib.ProxyOpts{
 		Logger:          logger,
 		Network:         ntw,
@@ -339,6 +341,7 @@ func runProxy(conf *config.Config, version string) error { //nolint: funlen, cyc
 		PendingHandshakesDryRun: conf.Defense.PendingHandshakes.DryRun.Get(false),
 		SecuredEnabled:          conf.Secured.Enabled.Get(false),
 		SecuredFrameTimeout:     conf.Secured.FrameTimeout.Get(0),
+		ServerHelloMSS:          serverHelloMSS,
 	}
 
 	proxy, err := mtglib.NewProxy(opts)
@@ -350,7 +353,7 @@ func runProxy(conf *config.Config, version string) error { //nolint: funlen, cyc
 	listeners := make([]net.Listener, 0, len(bindAddrs))
 
 	for _, addr := range bindAddrs {
-		l, err := utils.NewListener(addr, 0)
+		l, err := utils.NewListener(addr, 0, listenerMSS)
 		if err != nil {
 			for _, prev := range listeners {
 				prev.Close() //nolint: errcheck

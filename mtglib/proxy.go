@@ -55,6 +55,10 @@ type Proxy struct {
 	allowlist       IPBlocklist
 	eventStream     EventStream
 	logger          Logger
+
+	// serverHelloMSS > 0 splits the FakeTLS ServerHello (see
+	// server_hello_mss.go).
+	serverHelloMSS int
 }
 
 // DomainFrontingAddress returns a host:port pair for a fronting domain.
@@ -323,7 +327,19 @@ func (p *Proxy) doFakeTLSHandshake(ctx *streamContext) bool {
 	gangerNoise := p.doppelGanger.NoiseParams()
 	noiseParams := fake.NoiseParams{Mean: gangerNoise.Mean, Jitter: gangerNoise.Jitter}
 
-	if err := fake.SendServerHello(ctx.clientConn, matchedSecret.Key[:], result.Hello, noiseParams); err != nil {
+	// The ServerHello is the only server response in the FakeTLS handshake,
+	// and that is what DPI looks at. With client-mss it leaves in small
+	// segments; the rest of the session is not affected.
+	var helloWriter io.Writer = ctx.clientConn
+	if p.serverHelloMSS > 0 {
+		helloWriter = fragmentedWriter{
+			conn:     ctx.clientConn,
+			mss:      p.serverHelloMSS,
+			deadline: ctx.handshakeDeadline,
+		}
+	}
+
+	if err := fake.SendServerHello(helloWriter, matchedSecret.Key[:], result.Hello, noiseParams); err != nil {
 		p.logger.InfoError("cannot send welcome packet", err)
 		return false
 	}
@@ -618,6 +634,7 @@ func NewProxy(opts ProxyOpts) (*Proxy, error) {
 		tolerateTimeSkewness:     opts.getTolerateTimeSkewness(),
 		idleTimeout:              opts.getIdleTimeout(),
 		handshakeTimeout:         opts.getHandshakeTimeout(),
+		serverHelloMSS:           opts.ServerHelloMSS,
 		allowFallbackOnUnknownDC: opts.AllowFallbackOnUnknownDC,
 		pendingHandshakes:        newPendingHandshakes(),
 		pendingHandshakesPerIP:   uint32(min(opts.PendingHandshakesPerIP, math.MaxUint32)), //nolint: gosec
