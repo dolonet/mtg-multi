@@ -140,13 +140,13 @@ func TestDoSecuredHandshakeReplay(t *testing.T) {
 	events := &countingEventStream{}
 	proxy := &Proxy{
 		ctx:                 context.Background(),
-		secrets:             []Secret{secret},
-		secretNames:         []string{"main"},
 		antiReplayCache:     &mapAntiReplayCache{seen: map[string]bool{}},
 		eventStream:         events,
 		logger:              NoopLogger{},
 		securedFrameTimeout: time.Second,
 	}
+
+	set := newSecretSet(map[string]Secret{"main": secret})
 
 	rec := &recordingConn{}
 	if _, err := (obfuscation.Obfuscator{Secret: secret.Key[:]}).SendHandshake(rec, 2); err != nil {
@@ -156,7 +156,7 @@ func TestDoSecuredHandshakeReplay(t *testing.T) {
 	frame := rec.buf.Bytes()
 
 	first := newStreamContext(context.Background(), NoopLogger{}, securedTestConn(t, frame))
-	if err := proxy.doSecuredHandshake(first, newConnRewind(first.clientConn)); err != nil {
+	if err := proxy.doSecuredHandshake(first, newConnRewind(first.clientConn), set); err != nil {
 		t.Fatalf("the first secured handshake must succeed: %v", err)
 	}
 
@@ -167,7 +167,7 @@ func TestDoSecuredHandshakeReplay(t *testing.T) {
 	second := newStreamContext(context.Background(), NoopLogger{}, securedTestConn(t, frame))
 	rewind := newConnRewind(second.clientConn)
 
-	if err := proxy.doSecuredHandshake(second, rewind); err == nil {
+	if err := proxy.doSecuredHandshake(second, rewind, set); err == nil {
 		t.Fatal("a replayed secured handshake must be rejected")
 	}
 

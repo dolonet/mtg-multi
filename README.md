@@ -16,6 +16,20 @@ alice = "ee367a189aee18fa31c190054efd4a8e9573746f726167652e676f6f676c65617069732
 bob   = "ee0123456789abcdef0123456789abcd9573746f726167652e676f6f676c65617069732e636f6d"
 ```
 
+**Reload users without a restart.** Send `SIGHUP` and mtg re-reads the config file and applies the `[secrets]` section (or `secret`) on the fly. New users can connect right away; live sessions of unchanged users are kept; sessions of removed users and of users whose secret has changed are closed. If the file cannot be read or is invalid, the current secrets are kept and a warning is logged. Other options are not reloaded: they still need a restart. Not available on Windows.
+
+```console
+kill -HUP $(pidof mtg-multi)
+# or with systemd: ExecReload=/bin/kill -HUP $MAINPID, then
+systemctl reload mtg-multi
+```
+
+Write the new config atomically (to a temporary file, then `mv`), so mtg never reads a half-written file: a truncated file that still parses is applied as is, and every user missing from it is disconnected.
+
+If a new hostname does not resolve, the secrets are still applied and a warning is logged.
+
+Note: `SIGHUP` no longer terminates mtg, both for `run` and `simple-run`, including a foreground process when its terminal is closed. Stop it with `SIGINT` or `SIGTERM`.
+
 **Stats API.** A lightweight HTTP endpoint that shows live per-user traffic.
 
 ```toml
@@ -125,6 +139,20 @@ See [example.config.toml](example.config.toml) for all available options.
 alice = "ee367a189aee18fa31c190054efd4a8e9573746f726167652e676f6f676c65617069732e636f6d"
 bob   = "ee0123456789abcdef0123456789abcd9573746f726167652e676f6f676c65617069732e636f6d"
 ```
+
+**Смена пользователей без рестарта.** По `SIGHUP` mtg перечитывает файл конфига и применяет раздел `[secrets]` (или `secret`) на лету. Новые пользователи подключаются сразу; живые сессии неизменённых пользователей сохраняются; сессии удалённых пользователей и тех, у кого сменился секрет, закрываются. Если файл не читается или неверен, текущие секреты остаются, в лог пишется предупреждение. Остальные настройки так не перечитываются - для них по-прежнему нужен рестарт. На Windows недоступно.
+
+```console
+kill -HUP $(pidof mtg-multi)
+# или в systemd: ExecReload=/bin/kill -HUP $MAINPID, затем
+systemctl reload mtg-multi
+```
+
+Новый конфиг записывайте атомарно (во временный файл, затем `mv`), чтобы mtg не прочитал его наполовину записанным: обрезанный файл, который всё же разбирается, применяется как есть, и все пользователи, которых в нём нет, отключаются.
+
+Если новый hostname не резолвится, секреты всё равно применяются, в лог пишется предупреждение.
+
+Внимание: `SIGHUP` больше не завершает mtg - ни `run`, ни `simple-run`, в том числе процесс на переднем плане при закрытии терминала. Останавливайте его через `SIGINT` или `SIGTERM`.
 
 **Stats API.** HTTP-эндпоинт с live-статистикой трафика по пользователям.
 

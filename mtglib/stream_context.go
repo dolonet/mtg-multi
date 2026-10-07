@@ -11,14 +11,23 @@ import (
 )
 
 type streamContext struct {
-	ctx              context.Context
-	ctxCancel        context.CancelFunc
-	clientConn       essentials.Conn
-	telegramConn     essentials.Conn
-	streamID         string
-	dc               int
-	matchedSecretKey []byte
-	secretName       string
+	ctx          context.Context
+	ctxCancel    context.CancelFunc
+	clientConn   essentials.Conn
+	telegramConn essentials.Conn
+	// rawConn is the original client connection. Unlike clientConn it is never
+	// replaced, so only it may be closed from another goroutine (secret reload,
+	// shutdown): ServeConn replaces clientConn/telegramConn with wrappers, and
+	// reading an interface value while it is written is a data race.
+	rawConn essentials.Conn
+	// userStats is the stats entry this session is counted in. It is the one
+	// decremented: after a user is removed and added back, a lookup by name
+	// would find the new entry and drive its counter negative.
+	userStats     *secretStats
+	streamID      string
+	dc            int
+	matchedSecret Secret
+	secretName    string
 	// secured is true for a secured ("dd") client: plain obfuscated2 without
 	// FakeTLS. Its obfuscated2 handshake is done in doSecuredHandshake, so
 	// ServeConn skips the FakeTLS-specific steps.
@@ -69,6 +78,17 @@ func (s *streamContext) Close() {
 	}
 }
 
+// closeFromOutside aborts a session from another goroutine: it cancels the
+// context and closes the original connection. ServeConn closes the rest in
+// its own defer.
+func (s *streamContext) closeFromOutside() {
+	s.ctxCancel()
+
+	if s.rawConn != nil {
+		s.rawConn.Close() //nolint: errcheck
+	}
+}
+
 func (s *streamContext) ClientIP() net.IP {
 	return s.clientConn.RemoteAddr().(*net.TCPAddr).IP //nolint: forcetypeassert
 }
@@ -85,6 +105,7 @@ func newStreamContext(ctx context.Context, logger Logger, clientConn essentials.
 		ctx:        ctx,
 		ctxCancel:  cancel,
 		clientConn: clientConn,
+		rawConn:    clientConn,
 		streamID:   base64.RawURLEncoding.EncodeToString(connIDBytes),
 	}
 	streamCtx.logger = logger.

@@ -7,9 +7,9 @@ import (
 	"io"
 	"math"
 	"net"
-	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dolonet/mtg-multi/essentials"
@@ -46,9 +46,8 @@ type Proxy struct {
 	doppelGanger                *doppel.Ganger
 
 	stats           *ProxyStats
-	secrets         []Secret
-	secretNames     []string
-	secretHostnames []string
+	secretSet       atomic.Pointer[secretSet]
+	sessions        *sessionRegistry
 	network         Network
 	antiReplayCache AntiReplayCache
 	blocklist       IPBlocklist
@@ -62,7 +61,7 @@ type Proxy struct {
 // instead of the secret's hostname. When secrets use different hostnames,
 // pass the matched secret's host to front the correct domain.
 func (p *Proxy) DomainFrontingAddress() string {
-	return p.domainFrontingAddressForHost(p.secrets[0].Host)
+	return p.domainFrontingAddressForHost(p.secretSet.Load().secrets[0].Host)
 }
 
 func (p *Proxy) domainFrontingAddressForHost(host string) string {
@@ -90,7 +89,7 @@ func (p *Proxy) ServeConn(conn essentials.Conn) {
 	}
 
 	stop := context.AfterFunc(ctx, func() {
-		ctx.Close()
+		ctx.closeFromOutside()
 	})
 	defer stop()
 
@@ -136,10 +135,15 @@ func (p *Proxy) ServeConn(conn essentials.Conn) {
 		return
 	}
 
-	p.stats.OnConnect(ctx.secretName)
+	if !p.trackSession(ctx) {
+		ctx.logger.Info("secret was removed or changed during handshake")
+		return
+	}
+	defer p.sessions.remove(ctx)
+
 	p.stats.UpdateLastSeen(ctx.secretName)
 
-	defer p.stats.OnDisconnect(ctx.secretName)
+	defer ctx.userStats.connections.Add(-1)
 
 	// FakeTLS specifics: the doppelganger wrapper and a separate obfuscated2
 	// handshake inside the unwrapped TLS stream. A secured client has already
@@ -244,12 +248,7 @@ func (p *Proxy) Shutdown() {
 
 func (p *Proxy) doFakeTLSHandshake(ctx *streamContext) bool {
 	rewind := newConnRewind(ctx.clientConn)
-
-	// Build a slice of secret keys to try during HMAC validation.
-	secretKeys := make([][]byte, len(p.secrets))
-	for i := range p.secrets {
-		secretKeys[i] = p.secrets[i].Key[:]
-	}
+	set := p.secretSet.Load()
 
 	if p.securedEnabled {
 		// Classify the transport before invoking a parser. A TLS ClientHello with
@@ -259,7 +258,7 @@ func (p *Proxy) doFakeTLSHandshake(ctx *streamContext) bool {
 		firstBytes := [5]byte{}
 		if _, err := io.ReadFull(rewind, firstBytes[:]); err != nil {
 			ctx.logger.InfoError("cannot read initial handshake bytes", err)
-			p.doDomainFrontingForHost(ctx, rewind, p.secrets[0].Host)
+			p.doDomainFrontingForHost(ctx, rewind, set.secrets[0].Host)
 
 			return false
 		}
@@ -272,14 +271,14 @@ func (p *Proxy) doFakeTLSHandshake(ctx *streamContext) bool {
 			// of waiting for a 64-byte frame that will never come.
 			if obfuscation.IsReservedFramePrefix(firstBytes[:4]) {
 				ctx.logger.Info("first bytes cannot start a secured handshake")
-				p.doDomainFrontingForHost(ctx, rewind, p.secrets[0].Host)
+				p.doDomainFrontingForHost(ctx, rewind, set.secrets[0].Host)
 
 				return false
 			}
 
-			if err := p.doSecuredHandshake(ctx, rewind); err != nil {
+			if err := p.doSecuredHandshake(ctx, rewind, set); err != nil {
 				ctx.logger.InfoError("cannot process secured handshake", err)
-				p.doDomainFrontingForHost(ctx, rewind, p.secrets[0].Host)
+				p.doDomainFrontingForHost(ctx, rewind, set.secrets[0].Host)
 
 				return false
 			}
@@ -290,14 +289,14 @@ func (p *Proxy) doFakeTLSHandshake(ctx *streamContext) bool {
 
 	result, err := fake.ReadClientHelloMulti(
 		rewind,
-		secretKeys,
-		p.secretHostnames,
+		set.keys,
+		set.hostnames,
 		p.tolerateTimeSkewness,
 	)
 	if err != nil {
 		p.logger.InfoError("cannot read client hello", err)
 
-		frontHost := p.secrets[0].Host
+		frontHost := set.secrets[0].Host
 		if result != nil && result.MatchedHost != "" {
 			frontHost = result.MatchedHost
 		}
@@ -315,9 +314,9 @@ func (p *Proxy) doFakeTLSHandshake(ctx *streamContext) bool {
 		return false
 	}
 
-	matchedSecret := p.secrets[result.MatchedIndex]
-	ctx.matchedSecretKey = matchedSecret.Key[:]
-	ctx.secretName = p.secretNames[result.MatchedIndex]
+	matchedSecret := set.secrets[result.MatchedIndex]
+	ctx.matchedSecret = matchedSecret
+	ctx.secretName = set.names[result.MatchedIndex]
 	ctx.logger = ctx.logger.BindStr("secret_name", ctx.secretName)
 
 	gangerNoise := p.doppelGanger.NoiseParams()
@@ -344,16 +343,14 @@ func isFakeTLSHandshake(firstBytes [5]byte) bool {
 
 // doSecuredHandshake handles a secured ("dd") client: plain obfuscated2
 // without FakeTLS. The secret is found by trying the keys of all configured
-// secrets against the handshake frame (dd and ee secrets share the key).
-func (p *Proxy) doSecuredHandshake(ctx *streamContext, rewind *connRewind) error {
+// secrets against the handshake frame (dd and ee secrets share the key). The
+// keys and the matched name come from the same snapshot of the secrets, as in
+// the FakeTLS handshake, so a concurrent UpdateSecrets cannot pair the key of
+// one user with the name of another.
+func (p *Proxy) doSecuredHandshake(ctx *streamContext, rewind *connRewind, set *secretSet) error {
 	rewind.Rewind()
 
-	secretKeys := make([][]byte, len(p.secrets))
-	for i := range p.secrets {
-		secretKeys[i] = p.secrets[i].Key[:]
-	}
-
-	idx, dcIdx, cn, replayKey, err := p.readSecuredFrame(ctx, rewind, secretKeys)
+	idx, dcIdx, cn, replayKey, err := p.readSecuredFrame(ctx, rewind, set.keys)
 	if err != nil {
 		return err
 	}
@@ -371,8 +368,8 @@ func (p *Proxy) doSecuredHandshake(ctx *streamContext, rewind *connRewind) error
 	ctx.secured = true
 	ctx.dc = dcIdx
 	ctx.clientConn = cn
-	ctx.matchedSecretKey = p.secrets[idx].Key[:]
-	ctx.secretName = p.secretNames[idx]
+	ctx.matchedSecret = set.secrets[idx]
+	ctx.secretName = set.names[idx]
 	ctx.logger = ctx.logger.BindStr("secret_name", ctx.secretName).BindInt("dc", dcIdx)
 
 	return nil
@@ -413,7 +410,7 @@ func (p *Proxy) readSecuredFrame(
 func (p *Proxy) doObfuscatedHandshake(ctx *streamContext) error {
 	// Use the secret key that was matched during the FakeTLS handshake.
 	obfs := obfuscation.Obfuscator{
-		Secret: ctx.matchedSecretKey,
+		Secret: ctx.matchedSecret.Key[:],
 	}
 
 	dc, conn, err := obfs.ReadHandshake(ctx.clientConn)
@@ -554,36 +551,10 @@ func NewProxy(opts ProxyOpts) (*Proxy, error) {
 	logger := opts.getLogger("proxy")
 	updatersLogger := logger.Named("telegram-updaters")
 
-	secretsMap := opts.getSecrets()
-	secretNames := make([]string, 0, len(secretsMap))
-
-	for name := range secretsMap {
-		secretNames = append(secretNames, name)
-	}
-
-	sort.Strings(secretNames)
-
-	secretsList := make([]Secret, 0, len(secretsMap))
-
-	for _, name := range secretNames {
-		secretsList = append(secretsList, secretsMap[name])
-	}
-
-	// Collect unique hostnames across all secrets for SNI matching.
-	hostnameSet := make(map[string]struct{}, len(secretsList))
-	for _, s := range secretsList {
-		hostnameSet[s.Host] = struct{}{}
-	}
-
-	secretHostnames := make([]string, 0, len(hostnameSet))
-	for h := range hostnameSet {
-		secretHostnames = append(secretHostnames, h)
-	}
-
-	sort.Strings(secretHostnames)
+	set := newSecretSet(opts.getSecrets())
 
 	stats := NewProxyStats()
-	for _, name := range secretNames {
+	for _, name := range set.names {
 		stats.PreRegister(name)
 	}
 
@@ -604,9 +575,7 @@ func NewProxy(opts ProxyOpts) (*Proxy, error) {
 		ctx:                      ctx,
 		ctxCancel:                cancel,
 		stats:                    stats,
-		secrets:                  secretsList,
-		secretNames:              secretNames,
-		secretHostnames:          secretHostnames,
+		sessions:                 newSessionRegistry(),
 		network:                  opts.Network,
 		antiReplayCache:          opts.AntiReplayCache,
 		blocklist:                opts.IPBlocklist,
@@ -642,6 +611,8 @@ func NewProxy(opts ProxyOpts) (*Proxy, error) {
 		domainFrontingProxyProtocol: opts.DomainFrontingProxyProtocol,
 	}
 
+	proxy.secretSet.Store(set)
+	stats.SetSecretsDigest(set.digest())
 	proxy.doppelGanger.Run()
 
 	if opts.AutoUpdate {
@@ -662,4 +633,99 @@ func NewProxy(opts ProxyOpts) (*Proxy, error) {
 	proxy.workerPool = pool
 
 	return proxy, nil
+}
+
+// trackSession registers an authenticated session and counts it in the stats.
+// It fails if the secret the session has authenticated with was removed or
+// changed by UpdateSecrets after the handshake had started. Both happen under
+// the registry lock, so a concurrent update either sees the session and
+// closes it, or the session is rejected; the stats of a removed secret are
+// never recreated.
+func (p *Proxy) trackSession(ctx *streamContext) bool {
+	p.sessions.mu.Lock()
+	defer p.sessions.mu.Unlock()
+
+	if !p.secretSet.Load().sameSecret(ctx.secretName, ctx.matchedSecret) {
+		return false
+	}
+
+	p.sessions.add(ctx)
+	ctx.userStats = p.stats.getOrCreate(ctx.secretName)
+	ctx.userStats.connections.Add(1)
+
+	return true
+}
+
+// UpdateSecrets replaces the set of secrets without restarting the proxy.
+//
+// New handshakes use the new set right away. Live sessions of secrets that
+// are kept unchanged continue to work; sessions of removed secrets and of
+// secrets whose key or host has changed are closed. Other options (bind
+// addresses, domain fronting, defense settings) are not affected.
+func (p *Proxy) UpdateSecrets(secrets map[string]Secret) (SecretsUpdate, error) {
+	update := SecretsUpdate{}
+
+	if len(secrets) == 0 {
+		return update, ErrSecretEmpty
+	}
+
+	for name, secret := range secrets {
+		if !secret.Valid() {
+			return update, fmt.Errorf("invalid secret %q", name)
+		}
+	}
+
+	next := newSecretSet(secrets)
+
+	for _, name := range next.names {
+		p.stats.PreRegister(name)
+	}
+
+	toClose := []*streamContext{}
+	gone := []string{}
+
+	p.sessions.mu.Lock()
+
+	prev := p.secretSet.Swap(next)
+	p.stats.SetSecretsDigest(next.digest())
+
+	for _, name := range prev.names {
+		newSecret, ok := next.byName[name]
+
+		switch {
+		case !ok:
+			update.Removed++
+			gone = append(gone, name)
+		case newSecret != prev.byName[name]:
+			update.Changed++
+		default:
+			continue
+		}
+
+		for ctx := range p.sessions.sessions[name] {
+			toClose = append(toClose, ctx)
+		}
+
+		delete(p.sessions.sessions, name)
+	}
+
+	for _, name := range gone {
+		p.stats.Forget(name)
+	}
+
+	p.sessions.mu.Unlock()
+
+	for _, name := range next.names {
+		if _, ok := prev.byName[name]; !ok {
+			update.Added++
+		}
+	}
+
+	for _, ctx := range toClose {
+		ctx.closeFromOutside()
+	}
+
+	update.ClosedSessions = len(toClose)
+
+	return update, nil
 }

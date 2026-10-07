@@ -127,6 +127,11 @@ allow-fallback-on-unknown-dc = false
 #
 # IMPORTANT: [secrets] must appear after all global keys (like bind-to,
 # api-bind-to) — in TOML, keys after a [section] belong to that table.
+#
+# Secrets can be changed without a restart: edit this file (atomically,
+# via a temporary file and mv) and send SIGHUP to mtg. Sessions of removed
+# users and of users with a changed secret are closed; other users are not
+# affected. Other options are not reloaded.
 # [secrets]
 # alice = "ee367a189aee18fa31c190054efd4a8e9573746f726167652e676f6f676c65617069732e636f6d"
 # bob = "ee0123456789abcdef0123456789abcd9573746f726167652e676f6f676c65617069732e636f6d"
