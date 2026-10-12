@@ -313,6 +313,8 @@ func runProxy(
 		doppelGangerURLs[i] = v.String()
 	}
 
+	serverHelloMSS, listenerMSS := clientMSSPlan(conf, logger)
+
 	opts := mtglib.ProxyOpts{
 		Logger:          logger,
 		Network:         ntw,
@@ -348,6 +350,7 @@ func runProxy(
 		PendingHandshakesDryRun: conf.Defense.PendingHandshakes.DryRun.Get(false),
 		SecuredEnabled:          conf.Secured.Enabled.Get(false),
 		SecuredFrameTimeout:     conf.Secured.FrameTimeout.Get(0),
+		ServerHelloMSS:          serverHelloMSS,
 	}
 
 	// The [web] section is parsed and validated, but the WEB listener itself
@@ -366,7 +369,7 @@ func runProxy(
 	listeners := make([]net.Listener, 0, len(bindAddrs))
 
 	for _, addr := range bindAddrs {
-		l, err := utils.NewListener(addr, 0, logger.Named("listener"))
+		l, err := utils.NewListener(addr, 0, logger.Named("listener"), listenerMSS)
 		if err != nil {
 			for _, prev := range listeners {
 				prev.Close() //nolint: errcheck

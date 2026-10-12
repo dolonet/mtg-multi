@@ -226,8 +226,6 @@ func TestReadSecuredFrameSkipsShortTimeoutForSecuredTransport(t *testing.T) {
 	secret := GenerateSecret("example.com")
 	proxy := &Proxy{
 		ctx:                 context.Background(),
-		secrets:             []Secret{secret},
-		secretNames:         []string{"main"},
 		antiReplayCache:     &mapAntiReplayCache{seen: map[string]bool{}},
 		eventStream:         &countingEventStream{},
 		logger:              NoopLogger{},
@@ -240,6 +238,7 @@ func TestReadSecuredFrameSkipsShortTimeoutForSecuredTransport(t *testing.T) {
 	}
 
 	frame := rec.buf.Bytes()
+	set := newSecretSet(map[string]Secret{"main": secret})
 
 	delayed := func(secured bool) error {
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -266,7 +265,7 @@ func TestReadSecuredFrameSkipsShortTimeoutForSecuredTransport(t *testing.T) {
 		ctx := newStreamContext(context.Background(), NoopLogger{}, conn)
 		ctx.handshakeDeadline = time.Now().Add(5 * time.Second)
 
-		return proxy.doSecuredHandshake(ctx, newConnRewind(ctx.clientConn))
+		return proxy.doSecuredHandshake(ctx, newConnRewind(ctx.clientConn), set)
 	}
 
 	if err := delayed(true); err != nil {

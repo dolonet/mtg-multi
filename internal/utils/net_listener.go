@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -74,8 +75,13 @@ func (l *Listener) logSkipped(conn net.Conn, err error) {
 	logger.WarningError("cannot set client socket options, the connection is dropped", err)
 }
 
-func NewListener(bindTo string, bufferSize int, logger mtglib.Logger) (net.Listener, error) {
-	base, err := net.Listen("tcp", bindTo)
+// NewListener opens a listening socket. listenerMSS > 0 sets TCP_MAXSEG on it
+// (Linux only): this MSS is advertised to the client in the SYN-ACK and caps
+// the size of segments sent to the client for the whole connection.
+func NewListener(bindTo string, bufferSize int, logger mtglib.Logger, listenerMSS int) (net.Listener, error) {
+	lc := net.ListenConfig{Control: network.ListenControlMSS(listenerMSS)}
+
+	base, err := lc.Listen(context.Background(), "tcp", bindTo)
 	if err != nil {
 		return nil, fmt.Errorf("cannot build a base listener: %w", err)
 	}
