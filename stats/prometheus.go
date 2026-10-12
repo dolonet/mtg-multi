@@ -127,6 +127,10 @@ func (p prometheusProcessor) EventPendingHandshakeLimit(evt mtglib.EventPendingH
 	p.factory.metricPendingHandshakeLimit.WithLabelValues(evt.Action).Inc()
 }
 
+func (p prometheusProcessor) EventDCPool(evt mtglib.EventDCPool) {
+	p.factory.metricDCPool.WithLabelValues(strconv.Itoa(evt.DC), evt.Result).Inc()
+}
+
 func (p prometheusProcessor) EventIPListSize(evt mtglib.EventIPListSize) {
 	tag := TagIPListBlock
 	if !evt.IsBlockList {
@@ -160,6 +164,7 @@ type PrometheusFactory struct {
 	metricDomainFrontingTraffic *prometheus.CounterVec
 	metricIPBlocklisted         *prometheus.CounterVec
 	metricPendingHandshakeLimit *prometheus.CounterVec
+	metricDCPool                *prometheus.CounterVec
 
 	metricDomainFronting     prometheus.Counter
 	metricConcurrencyLimited prometheus.Counter
@@ -242,6 +247,11 @@ func NewPrometheus(metricPrefix, httpPath string) *PrometheusFactory { //nolint:
 			Name:      MetricPendingHandshakeLimit,
 			Help:      "Connections over the per-IP limit on pending handshakes: rejected or observed (dry run).",
 		}, []string{TagAction}),
+		metricDCPool: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: metricPrefix,
+			Name:      MetricDCPool,
+			Help:      "Warm DC pool activity: hits, misses and dropped pooled connections.",
+		}, []string{TagDC, TagDCPoolResult}),
 
 		metricDomainFronting: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: metricPrefix,
@@ -269,6 +279,7 @@ func NewPrometheus(metricPrefix, httpPath string) *PrometheusFactory { //nolint:
 	registry.MustRegister(factory.metricDomainFrontingTraffic)
 	registry.MustRegister(factory.metricIPBlocklisted)
 	registry.MustRegister(factory.metricPendingHandshakeLimit)
+	registry.MustRegister(factory.metricDCPool)
 
 	registry.MustRegister(factory.metricDomainFronting)
 	registry.MustRegister(factory.metricConcurrencyLimited)

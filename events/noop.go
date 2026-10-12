@@ -27,6 +27,7 @@ func (n noopObserver) EventIPBlocklisted(_ mtglib.EventIPBlocklisted)           
 func (n noopObserver) EventReplayAttack(_ mtglib.EventReplayAttack)                   {}
 func (n noopObserver) EventIPListSize(_ mtglib.EventIPListSize)                       {}
 func (n noopObserver) EventPendingHandshakeLimit(_ mtglib.EventPendingHandshakeLimit) {}
+func (n noopObserver) EventDCPool(_ mtglib.EventDCPool)                               {}
 func (n noopObserver) Shutdown()                                                      {}
 
 // NewNoopObserver creates an observer which discards each message.

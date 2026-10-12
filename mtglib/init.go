@@ -58,6 +58,10 @@ var (
 	// ErrLoggerIsNotDefined is returned if you are trying to create a proxy but
 	// logger is not defined.
 	ErrLoggerIsNotDefined = errors.New("logger is not defined")
+
+	// ErrDCPoolInvalid is returned if the warm DC pool settings are out of
+	// range: too many connections per DC, a zero DC id or a duplicate DC.
+	ErrDCPoolInvalid = errors.New("dc pool settings are invalid")
 )
 
 const (
@@ -120,7 +124,43 @@ const (
 
 	// DoppelGangerEach defines a time period between each crawl attempt.
 	DoppelGangerEach = 6 * time.Hour
+
+	// DefaultDCPoolSize is a default number of warm connections kept per DC in
+	// the dcPool.
+	DefaultDCPoolSize = 2
+
+	// DCPoolConnMaxAge is how long a warm DC connection may sit in the pool
+	// before it is evicted and replaced. Kept well under Telegram's idle-close
+	// threshold so a handed-over connection is not stale.
+	DCPoolConnMaxAge = 20 * time.Second
+
+	// DCPoolRefreshInterval is how often each filler goroutine tops up its DC
+	// (and evicts aged connections). Must be < DCPoolConnMaxAge so aged
+	// connections are replaced proactively.
+	DCPoolRefreshInterval = 7 * time.Second
+
+	// DCPoolMaxSize is the upper bound of warm connections kept per DC. Every
+	// pooled connection is an idle TCP connection to Telegram held open even
+	// without clients, so a typo like size = 1000 must not open thousands.
+	DCPoolMaxSize = 64
+
+	// DCPoolMaxDCs is the upper bound of DCs the pool may warm.
+	DCPoolMaxDCs = 32
+
+	// DCPoolDialTimeout bounds a single warm dial and handshake of a filler, so
+	// Shutdown never waits longer than this on an in-flight dial even if the
+	// network dialer has no timeout of its own.
+	DCPoolDialTimeout = 10 * time.Second
+
+	// DCPoolMaxBackoff caps the pause of a filler whose DC keeps failing. The
+	// pause starts at 2*DCPoolRefreshInterval and doubles on every failure in a
+	// row.
+	DCPoolMaxBackoff = 2 * time.Minute
 )
+
+// DefaultDCPoolDCs is the default set of Telegram DCs the warm pool keeps
+// connections to: the regular (non-media) production DCs.
+var DefaultDCPoolDCs = []int{1, 2, 3, 4, 5}
 
 // Network defines a knowledge how to work with a network. It may sound fun but
 // it encapsulates all the knowledge how to properly establish connections to

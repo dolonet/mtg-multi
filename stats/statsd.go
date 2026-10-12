@@ -130,6 +130,12 @@ func (s statsdProcessor) EventPendingHandshakeLimit(evt mtglib.EventPendingHands
 	s.client.Incr(MetricPendingHandshakeLimit, 1, statsd.StringTag(TagAction, evt.Action))
 }
 
+func (s statsdProcessor) EventDCPool(evt mtglib.EventDCPool) {
+	s.client.Incr(MetricDCPool, 1,
+		statsd.IntTag(TagDC, evt.DC),
+		statsd.StringTag(TagDCPoolResult, evt.Result))
+}
+
 func (s statsdProcessor) EventIPListSize(evt mtglib.EventIPListSize) {
 	tag := TagIPListBlock
 	if !evt.IsBlockList {
