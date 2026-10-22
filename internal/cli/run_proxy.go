@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -21,6 +20,7 @@ import (
 	"github.com/dolonet/mtg-multi/mtglib"
 	"github.com/dolonet/mtg-multi/network/v2"
 	"github.com/dolonet/mtg-multi/stats"
+	"github.com/dolonet/mtg-multi/web"
 	"github.com/pires/go-proxyproto"
 	"github.com/rs/zerolog"
 	"github.com/yl2chen/cidranger"
@@ -354,16 +354,25 @@ func runProxy(
 		DCPoolDCs:     conf.DCPool.DCs,
 	}
 
-	// The [web] section is parsed and validated, but the WEB listener itself
-	// (package web) is added separately. Refuse to start rather than silently
-	// run without the mode the config asks for.
-	if strings.TrimSpace(conf.Web.BindTo) != "" {
-		return errWebUnavailable
-	}
-
 	proxy, err := mtglib.NewProxy(opts)
 	if err != nil {
 		return fmt.Errorf("cannot create a proxy: %w", err)
+	}
+
+	// WEB mode: MTProto inside a real HTTPS session. Every logical stream goes
+	// through the same admission as a regular connection (allowlist, blocklist,
+	// worker pool) and into the same ServeConn, so the handshake, stats and
+	// limits work unchanged. A WEB listener that cannot start is fatal: the
+	// config asks for the mode, and running without it would fail silently.
+	webServer, webErrs, err := startWeb(conf, proxy, logger.Named("web"))
+	if err != nil {
+		proxy.Shutdown()
+
+		return fmt.Errorf("cannot start web mode: %w", err)
+	}
+
+	if webServer != nil {
+		defer webServer.Close()
 	}
 
 	bindAddrs := conf.GetBindAddrs()
@@ -413,16 +422,54 @@ func runProxy(
 	}()
 
 	if readConfig != nil {
+		// A SIGHUP reloads the users of the WEB mode as well; the rest of
+		// the [web] section is read only at startup.
+		var updater secretsUpdater = proxy
+		if webServer != nil {
+			updater = reloadWithWeb{proxy: proxy, web: webServer, logger: logger.Named("reload")}
+		}
+
 		go watchReload(
-			ctx, reloadSignals, readConfig, proxy,
+			ctx, reloadSignals, readConfig, updater,
 			net.DefaultResolver, conf.GetSecrets(), logger.Named("reload"),
 		)
 	}
 
-	return waitAndShutdown(ctx, serveErr, func() {
+	// The same for the WEB listener: if it stops on its own, mtg stops too
+	// instead of running on without the mode the config asks for. Its channel
+	// is closed without a value after webServer.Close.
+	webFailure := make(chan error, 1)
+
+	if webErrs != nil {
+		go func() {
+			if err := <-webErrs; err != nil {
+				webFailure <- err
+
+				cancel()
+			}
+		}()
+	}
+
+	if err := waitAndShutdown(ctx, serveErr, func() {
 		listener.Close() //nolint: errcheck
+		// WEB first: closing its sessions ends every WEB stream, so the
+		// proxy does not wait in Shutdown for handlers whose transport is
+		// still open.
+		if webServer != nil {
+			webServer.Close()
+		}
+
 		proxy.Shutdown()
-	})
+	}); err != nil {
+		return err
+	}
+
+	select {
+	case err := <-webFailure:
+		return fmt.Errorf("web listener stopped: %w", err)
+	default:
+		return nil
+	}
 }
 
 // waitAndShutdown waits for shutdown, stops the proxy and decides whether the
@@ -450,6 +497,44 @@ func waitAndShutdown(ctx context.Context, serveErr <-chan error, stop func()) er
 	return nil
 }
 
-// errWebUnavailable is returned when the config enables the WEB mode in a
-// build that does not have it.
-var errWebUnavailable = errors.New("[web] is configured, but this build has no WEB mode support")
+func startWeb(conf *config.Config, proxy *mtglib.Proxy, logger mtglib.Logger) (*web.Server, <-chan error, error) {
+	if strings.TrimSpace(conf.Web.BindTo) == "" {
+		return nil, nil, nil
+	}
+
+	secrets := webSecrets(conf.GetSecrets())
+
+	mode := web.SecretModeDD
+	if strings.EqualFold(strings.TrimSpace(conf.Web.SecretMode), string(web.SecretModePlain)) {
+		mode = web.SecretModePlain
+	}
+
+	server, bind, err := web.Setup(web.Settings{
+		BindTo:             conf.Web.BindTo,
+		Host:               conf.Web.Host,
+		SecretMode:         mode,
+		DecoyDir:           conf.Web.DecoyDir,
+		MaxSessions:        int(conf.Web.MaxSessions.Get(0)),        //nolint: gosec
+		MaxPending:         int(conf.Web.MaxPending.Get(0)),         //nolint: gosec
+		MaxSessionsPerUser: int(conf.Web.MaxSessionsPerUser.Get(0)), //nolint: gosec
+		MaxPendingPerUser:  int(conf.Web.MaxPendingPerUser.Get(0)),  //nolint: gosec
+		Diag:               conf.Web.Diag.Get(false),
+		Logger:             logger,
+	}, secrets, func(stream *web.Stream) {
+		proxy.ServeStream(stream)
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	errs, err := server.Start(bind)
+	if err != nil {
+		server.Close()
+
+		return nil, nil, err
+	}
+
+	logger.Info("web mode listens on " + bind)
+
+	return server, errs, nil
+}
