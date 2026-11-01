@@ -20,7 +20,17 @@ func acceptWithRetry(ctx context.Context, listener net.Listener, logger Logger) 
 			return conn, nil
 		}
 
-		if ctx.Err() != nil || !acceptretry.IsTemporary(err) {
+		if ctx.Err() != nil {
+			return nil, err
+		}
+
+		if acceptretry.IsAcceptedConn(err) {
+			logger.DebugError("accepted connection failed before use", err)
+
+			continue
+		}
+
+		if !acceptretry.IsTemporary(err) {
 			return nil, err
 		}
 
