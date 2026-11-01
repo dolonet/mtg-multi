@@ -1,6 +1,12 @@
 name: Docker
 
 on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to publish (for example v1.13.0)
+        required: true
+        type: string
   push:
     branches:
       - master
@@ -15,9 +21,26 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
+      - name: Validate release tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo 'Expected an existing stable release tag such as v1.13.0.' >&2
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
+
+      - name: Record checked-out revision
+        id: source
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "short=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-qemu-action@v3
 
@@ -33,11 +56,13 @@ jobs:
         id: meta
         with:
           images: ghcr.io/${{ github.repository }}
+          flavor: latest=${{ github.event_name != 'workflow_dispatch' && 'auto' || 'false' }}
+          labels: org.opencontainers.image.revision=${{ steps.source.outputs.sha }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha
+            type=raw,value=latest,enable=${{ github.event_name != 'workflow_dispatch' && github.ref == 'refs/heads/master' }}
+            type=semver,pattern={{version}},value=${{ inputs.release_tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.release_tag }}
+            type=raw,value=sha-${{ steps.source.outputs.short }}
 
       - uses: docker/build-push-action@v6
         with:
