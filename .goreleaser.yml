@@ -35,6 +35,7 @@ archives:
     wrap_in_directory: true
     files:
       - LICENSE
+      - web/LICENSE.telemt
       - README.md
       - example.config.toml
 

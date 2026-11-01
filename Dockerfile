@@ -53,5 +53,7 @@ CMD ["run", "/config/config.toml"]
 
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build /app/mtg /mtg
+COPY --from=build /app/LICENSE /licenses/LICENSE
+COPY --from=build /app/web/LICENSE.telemt /licenses/LICENSE.telemt
 COPY --from=build /app/example.config.toml /config.toml
 COPY --from=build /config /config
