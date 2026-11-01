@@ -42,6 +42,19 @@ func IsTemporary(err error) bool {
 		errors.Is(err, syscall.ECONNRESET)
 }
 
+// IsAcceptedConn reports whether an Accept error belongs to the new connection
+// and not to the listener (see acceptedConnErrnos). That connection is already
+// gone, so accepting continues at once, without a pause.
+func IsAcceptedConn(err error) bool {
+	for _, errno := range acceptedConnErrnos {
+		if errors.Is(err, errno) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // NextDelay returns the pause before the next Accept attempt after a temporary
 // error: it starts at MinDelay and doubles up to MaxDelay, like net/http.
 func NextDelay(previous time.Duration) time.Duration {
