@@ -5,12 +5,17 @@ on:
     - cron: "0 8 1 * *"
   workflow_dispatch:
 
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
 jobs:
   sync:
     runs-on: ubuntu-latest
     permissions:
       contents: write
       issues: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,7 +29,14 @@ jobs:
 
       - name: Check for new commits
         id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          if [ "$(gh pr list --state open --label sync --json number --jq 'length')" != 0 ]; then
+            echo 'An upstream sync PR is already open; review it before starting another.'
+            echo 'count=0' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           COUNT=$(git rev-list --count HEAD..upstream/master)
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
           echo "Upstream is $COUNT commits ahead"
@@ -38,9 +50,14 @@ jobs:
           git merge upstream/master --no-edit
         continue-on-error: true
 
-      - name: Push if merge succeeded
+      - name: Push a review branch if merge succeeded
+        id: branch
         if: steps.check.outputs.count != '0' && steps.merge.outcome == 'success'
-        run: git push origin master
+        run: |
+          BRANCH="sync/upstream-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          git switch -c "$BRANCH"
+          git push origin "$BRANCH"
+          echo "name=$BRANCH" >> "$GITHUB_OUTPUT"
 
       - name: Report conflict (one open issue, commented on repeats)
         if: steps.merge.outcome == 'failure'
@@ -67,21 +84,29 @@ jobs:
               labels: ['sync'],
             });
 
-      - name: Close open sync issues after a successful sync
+      - name: Open a sync PR for review and CI
         if: steps.check.outputs.count != '0' && steps.merge.outcome == 'success'
         uses: actions/github-script@v7
+        env:
+          SYNC_BRANCH: ${{ steps.branch.outputs.name }}
         with:
           script: |
             const { owner, repo } = context.repo;
             const open = await github.rest.issues.listForRepo({
-              owner, repo, state: 'open', labels: 'sync',
+              owner, repo, state: 'open', labels: 'sync', per_page: 100,
             });
-            for (const issue of open.data) {
-              await github.rest.issues.createComment({
-                owner, repo, issue_number: issue.number,
-                body: 'Upstream merged cleanly; closing.',
-              });
-              await github.rest.issues.update({
-                owner, repo, issue_number: issue.number, state: 'closed',
-              });
-            }
+            const closes = open.data.filter(issue => !issue.pull_request)
+              .map(issue => `Closes #${issue.number}`).join('\n');
+            const pr = await github.rest.pulls.create({
+              owner, repo,
+              head: process.env.SYNC_BRANCH,
+              base: context.payload.repository.default_branch,
+              title: 'sync: merge upstream/master',
+              body: 'Review this merge and approve the PR workflows before merging. '
+                + 'A clean textual merge does not prove the code builds or tests pass. '
+                + 'Use a merge commit to preserve upstream ancestry.\n\n' + closes,
+            });
+            await github.rest.issues.addLabels({
+              owner, repo, issue_number: pr.data.number, labels: ['sync'],
+            });
+            core.notice(`Sync PR: ${pr.data.html_url}`);
