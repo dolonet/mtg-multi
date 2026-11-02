@@ -95,6 +95,43 @@ host = "proxy.example.com"
 decoy-dir = "/var/www/decoy"
 ```
 
+**WEB connection link.** Open this form in a Telegram Desktop version with WEB proxy support:
+
+```text
+tg://webproxy?server=proxy.example.com&secret=dd<32 hex digits of the user's key>
+```
+
+The server is `[web].host`, and HTTPS uses port 443. The WEB secret uses the same 16-byte key as that user's `[secrets]` entry: replace the `ee` prefix with `dd` and leave out the encoded FakeTLS hostname. If `[web].secret-mode = "plain"`, leave out the `dd` prefix too. The hostname inside the original secret does not have to match `[web].host`. The client computes the bridge capability itself.
+
+For either hex or base64url config secrets, this local command prints the link for `alice` (Python 3.11+, no extra packages):
+
+```sh
+python3 - /etc/mtg/config.toml alice <<'PY'
+import base64
+import sys
+import tomllib
+from urllib.parse import urlencode
+
+with open(sys.argv[1], "rb") as source:
+    config = tomllib.load(source)
+web = config["web"]
+secret = config["secrets"][sys.argv[2]]
+try:
+    raw = bytes.fromhex(secret)
+except ValueError:
+    raw = base64.b64decode(secret + "=" * (-len(secret) % 4), altchars=b"-_", validate=True)
+if len(raw) <= 17 or raw[0] != 0xee:
+    raise SystemExit("Expected an ee secret with a 16-byte key and hostname")
+mode = web.get("secret-mode", "dd")
+if mode not in ("dd", "plain"):
+    raise SystemExit("Expected web.secret-mode dd or plain")
+key = ("dd" if mode == "dd" else "") + raw[1:17].hex()
+print("tg://webproxy?" + urlencode({"server": web["host"].strip().lower(), "secret": key}))
+PY
+```
+
+Give the resulting link only to that user: it contains their proxy password. It can also use the `https://t.me/webproxy?` prefix. The link format follows [Telegram Desktop's WEB proxy design](https://github.com/telegramdesktop/tdesktop/blob/dev/docs/web-proxy-plan.md#11-settings-and-app-integration).
+
 ```nginx
 # In the http context, outside the server block. The bridge link carries the
 # user's capability in the query string, so log without it.
@@ -270,6 +307,16 @@ bind-to = "127.0.0.1:18080"
 host = "proxy.example.com"
 decoy-dir = "/var/www/decoy"
 ```
+
+**Ссылка подключения WEB.** Откройте в Telegram Desktop с поддержкой WEB-прокси:
+
+```text
+tg://webproxy?server=proxy.example.com&secret=dd<32 hex-символа ключа пользователя>
+```
+
+В `server` указывается `[web].host`, HTTPS работает на порту 443. Из секрета пользователя в `[secrets]` берётся тот же 16-байтовый ключ: префикс `ee` заменяется на `dd`, закодированное имя FakeTLS-домена отбрасывается. При `[web].secret-mode = "plain"` префикс `dd` тоже не нужен. Домен внутри исходного секрета может отличаться от `[web].host`. Capability для страницы-моста клиент вычисляет сам.
+
+Команда Python 3.11+ в английском разделе выше читает конфиг и печатает готовую ссылку для `alice`; она поддерживает секреты в hex и base64url и не требует дополнительных пакетов. Замените путь к конфигу и имя пользователя. Полученная ссылка содержит пароль прокси: передавайте её только этому пользователю. Вместо `tg://webproxy?` можно использовать `https://t.me/webproxy?`.
 
 Происхождение: протокол WEB впервые реализован на стороне сервера в [telemt](https://github.com/telemt/telemt). Страница-мост и её HTML, CSP и Permissions-Policy (`web/bridge.go`, `web/bridge/runtime.js`) адаптированы из telemt, тестовые векторы capability взяты оттуда же; эти части используются по лицензии TELEMT LICENSE 3.3 (см. [`web/LICENSE.telemt`](web/LICENSE.telemt)), изменения перечислены в заголовках файлов. Серверная часть на Go написана заново по протоколу telemt. Для операторов: страница-мост, которую ваш сервер отдаёт клиентам, адаптирована из telemt и распространяется по лицензии TELEMT LICENSE 3.3 ([`web/LICENSE.telemt`](web/LICENSE.telemt)), и это можно указать в описании сервиса (раздел 7 лицензии рекомендует такую атрибуцию для публичного сетевого сервиса).
 
