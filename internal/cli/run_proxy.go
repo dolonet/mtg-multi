@@ -87,15 +87,32 @@ func makeNetwork(conf *config.Config, version string) (mtglib.Network, error) {
 	return value, nil
 }
 
-func makeAntiReplayCache(conf *config.Config) mtglib.AntiReplayCache {
+// makeAntiReplayCache returns the cache for secured ("dd") handshakes and the
+// cache for FakeTLS ClientHellos. The second one is nil in the bloom mode and
+// when anti-replay is disabled: mtglib then uses the first one for both.
+func makeAntiReplayCache(
+	conf *config.Config,
+	tolerateTimeSkewness time.Duration,
+) (mtglib.AntiReplayCache, mtglib.AntiReplayCache) {
 	if !conf.Defense.AntiReplay.Enabled.Get(false) {
-		return antireplay.NewNoop()
+		return antireplay.NewNoop(), nil
 	}
 
-	return antireplay.NewStableBloomFilter(
+	bloom := antireplay.NewStableBloomFilter(
 		conf.Defense.AntiReplay.MaxSize.Get(antireplay.DefaultStableBloomFilterMaxSize),
 		conf.Defense.AntiReplay.ErrorRate.Get(antireplay.DefaultStableBloomFilterErrorRate),
 	)
+
+	if conf.GetAntiReplayMode() != config.AntiReplayModeExact {
+		return bloom, nil
+	}
+
+	exact := antireplay.NewExact(
+		antireplay.TTLForTimeSkewness(tolerateTimeSkewness),
+		conf.Defense.AntiReplay.ExactMaxSize.Get(antireplay.DefaultExactMaxSize),
+	)
+
+	return bloom, exact
 }
 
 func makeIPBlocklist(conf config.ListConfig,
@@ -315,13 +332,17 @@ func runProxy(
 
 	serverHelloMSS, listenerMSS := clientMSSPlan(conf, logger)
 
+	tolerateTimeSkewness := conf.TolerateTimeSkewness.Get(mtglib.DefaultTolerateTimeSkewness)
+	antiReplayCache, fakeTLSAntiReplayCache := makeAntiReplayCache(conf, tolerateTimeSkewness)
+
 	opts := mtglib.ProxyOpts{
-		Logger:          logger,
-		Network:         ntw,
-		AntiReplayCache: makeAntiReplayCache(conf),
-		IPBlocklist:     blocklist,
-		IPAllowlist:     allowlist,
-		EventStream:     eventStream,
+		Logger:                 logger,
+		Network:                ntw,
+		AntiReplayCache:        antiReplayCache,
+		FakeTLSAntiReplayCache: fakeTLSAntiReplayCache,
+		IPBlocklist:            blocklist,
+		IPAllowlist:            allowlist,
+		EventStream:            eventStream,
 
 		Secrets:                     conf.GetSecrets(),
 		Concurrency:                 conf.GetConcurrency(mtglib.DefaultConcurrency),
@@ -332,7 +353,7 @@ func runProxy(
 		AutoUpdate:                  conf.AutoUpdate.Get(false),
 
 		AllowFallbackOnUnknownDC: conf.AllowFallbackOnUnknownDC.Get(false),
-		TolerateTimeSkewness:     conf.TolerateTimeSkewness.Value,
+		TolerateTimeSkewness:     tolerateTimeSkewness,
 		IdleTimeout:              conf.Network.Timeout.Idle.Get(mtglib.DefaultIdleTimeout),
 		HandshakeTimeout:         conf.Network.Timeout.Handshake.Get(mtglib.DefaultHandshakeTimeout),
 

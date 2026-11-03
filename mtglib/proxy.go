@@ -63,6 +63,10 @@ type Proxy struct {
 	eventStream     EventStream
 	logger          Logger
 
+	// fakeTLSAntiReplayCache checks FakeTLS ClientHellos; it is
+	// antiReplayCache unless ProxyOpts.FakeTLSAntiReplayCache is set.
+	fakeTLSAntiReplayCache AntiReplayCache
+
 	// serverHelloMSS > 0 splits the FakeTLS ServerHello (see
 	// server_hello_mss.go).
 	serverHelloMSS int
@@ -357,7 +361,12 @@ func (p *Proxy) doFakeTLSHandshake(ctx *streamContext) bool {
 		return false
 	}
 
-	if p.antiReplayCache.SeenBefore(result.Hello.SessionID) {
+	// The key is the client random: it is the HMAC of the whole ClientHello
+	// (with the timestamp mixed into its last 4 bytes), so it is unique per
+	// honest handshake and cannot be changed without failing authentication.
+	// The session ID used before is chosen by the client and may be empty or
+	// reused.
+	if p.fakeTLSAntiReplayCache.SeenBefore(result.Hello.Random[:]) {
 		p.logger.Warning("replay attack has been detected!")
 		p.eventStream.Send(p.ctx, NewEventReplayAttack(ctx.streamID))
 		p.doDomainFrontingForHost(ctx, rewind, result.MatchedHost)
@@ -717,6 +726,7 @@ func NewProxy(opts ProxyOpts) (*Proxy, error) {
 		sessions:                 newSessionRegistry(),
 		network:                  opts.Network,
 		antiReplayCache:          opts.AntiReplayCache,
+		fakeTLSAntiReplayCache:   opts.getFakeTLSAntiReplayCache(),
 		blocklist:                opts.IPBlocklist,
 		allowlist:                opts.IPAllowlist,
 		eventStream:              opts.EventStream,

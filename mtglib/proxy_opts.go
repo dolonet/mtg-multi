@@ -33,6 +33,18 @@ type ProxyOpts struct {
 	// This is a mandatory setting.
 	AntiReplayCache AntiReplayCache
 
+	// FakeTLSAntiReplayCache, if set, is used for FakeTLS ClientHellos instead
+	// of AntiReplayCache, which then serves only secured ("dd") handshakes.
+	//
+	// A FakeTLS ClientHello carries a timestamp, so a cache that remembers
+	// every digest for the whole timestamp window (antireplay.NewExact) gives
+	// exact replay protection without the false positives of a Bloom filter.
+	// If the cache reports its TTL (a ReplayTTL() time.Duration method), it
+	// must be at least FakeTLSReplayTTL(TolerateTimeSkewness).
+	//
+	// This is an optional setting.
+	FakeTLSAntiReplayCache AntiReplayCache
+
 	// IPBlocklist defines an instance of IP blocklist.
 	//
 	// This is a mandatory setting.
@@ -328,7 +340,27 @@ func (p ProxyOpts) valid() error {
 		return err
 	}
 
+	if cache, ok := p.FakeTLSAntiReplayCache.(interface{ ReplayTTL() time.Duration }); ok {
+		if needed := FakeTLSReplayTTL(p.getTolerateTimeSkewness()); cache.ReplayTTL() < needed {
+			return fmt.Errorf("%w: %v, needs at least %v",
+				ErrAntiReplayTTLTooShort, cache.ReplayTTL(), needed)
+		}
+	}
+
 	return nil
+}
+
+// FakeTLSReplayTTL returns how long a FakeTLS anti-replay cache has to
+// remember a ClientHello so that it covers the whole timestamp window of the
+// given skewness.
+//
+// A ClientHello with timestamp T is accepted while |now - T| <= skewness, that
+// is during [T - skewness, T + skewness]. It can be seen first at the very
+// start of that interval, so a replay can still pass the timestamp check up to
+// 2*skewness later. One second more covers the whole second of T, which the
+// client sends with second precision.
+func FakeTLSReplayTTL(skewness time.Duration) time.Duration {
+	return 2*skewness + time.Second
 }
 
 // ValidateDCPool checks the warm pool settings: size must not exceed
@@ -405,6 +437,14 @@ func (p ProxyOpts) getDomainFrontingPort() int {
 	}
 
 	return int(p.DomainFrontingPort)
+}
+
+func (p ProxyOpts) getFakeTLSAntiReplayCache() AntiReplayCache {
+	if p.FakeTLSAntiReplayCache != nil {
+		return p.FakeTLSAntiReplayCache
+	}
+
+	return p.AntiReplayCache
 }
 
 func (p ProxyOpts) getTolerateTimeSkewness() time.Duration {

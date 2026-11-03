@@ -181,6 +181,35 @@ func (suite *ConfigTestSuite) TestPendingHandshakes() {
 	suite.True(conf.Defense.PendingHandshakes.DryRun.Get(false))
 }
 
+func (suite *ConfigTestSuite) TestAntiReplayExactByDefault() {
+	conf, err := config.Parse(suite.ReadConfig("anti_replay_exact.toml"))
+	suite.NoError(err)
+	suite.NoError(conf.Validate())
+	suite.True(conf.Defense.AntiReplay.Enabled.Get(false))
+	suite.Equal(config.AntiReplayModeExact, conf.GetAntiReplayMode())
+	suite.EqualValues(32*1024*1024, conf.Defense.AntiReplay.ExactMaxSize.Get(0))
+
+	conf, err = config.Parse(suite.ReadConfig("minimal.toml"))
+	suite.NoError(err)
+	suite.Equal(config.AntiReplayModeExact, conf.GetAntiReplayMode())
+	suite.EqualValues(0, conf.Defense.AntiReplay.ExactMaxSize.Get(0))
+}
+
+func (suite *ConfigTestSuite) TestAntiReplayBloom() {
+	conf, err := config.Parse(suite.ReadConfig("anti_replay_bloom.toml"))
+	suite.NoError(err)
+	suite.NoError(conf.Validate())
+	suite.Equal(config.AntiReplayModeBloom, conf.GetAntiReplayMode())
+	suite.EqualValues(2*1024*1024, conf.Defense.AntiReplay.MaxSize.Get(0))
+	suite.InDelta(0.01, conf.Defense.AntiReplay.ErrorRate.Get(0), 1e-9)
+}
+
+func (suite *ConfigTestSuite) TestAntiReplayBadMode() {
+	conf, err := config.Parse(suite.ReadConfig("anti_replay_bad_mode.toml"))
+	suite.NoError(err)
+	suite.ErrorContains(conf.Validate(), "anti-replay.mode")
+}
+
 func (suite *ConfigTestSuite) TestSecuredDisabledByDefault() {
 	conf, err := config.Parse(suite.ReadConfig("minimal.toml"))
 	suite.NoError(err)

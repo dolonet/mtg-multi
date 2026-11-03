@@ -36,9 +36,11 @@ type tomlConfig struct {
 			DryRun   bool `toml:"dry-run" json:"dryRun,omitempty"`
 		} `toml:"pending-handshakes" json:"pendingHandshakes,omitempty"`
 		AntiReplay struct {
-			Enabled   bool    `toml:"enabled" json:"enabled,omitempty"`
-			MaxSize   string  `toml:"max-size" json:"maxSize,omitempty"`
-			ErrorRate float64 `toml:"error-rate" json:"errorRate,omitempty"`
+			Enabled      bool    `toml:"enabled" json:"enabled,omitempty"`
+			Mode         string  `toml:"mode" json:"mode,omitempty"`
+			MaxSize      string  `toml:"max-size" json:"maxSize,omitempty"`
+			ErrorRate    float64 `toml:"error-rate" json:"errorRate,omitempty"`
+			ExactMaxSize string  `toml:"exact-max-size" json:"exactMaxSize,omitempty"`
 		} `toml:"anti-replay" json:"antiReplay,omitempty"`
 		Blocklist struct {
 			Enabled             bool     `toml:"enabled" json:"enabled,omitempty"`

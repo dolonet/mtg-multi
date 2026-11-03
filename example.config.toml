@@ -399,7 +399,27 @@ dry-run = false
 [defense.anti-replay]
 # You can enable/disable this feature.
 enabled = true
-# max size of such a cache. Please be aware that this number is
+# How FakeTLS ClientHellos are checked for replays:
+#
+# - "exact" (default): every authenticated ClientHello is remembered for
+#   its whole timestamp window, 2 * tolerate-time-skewness + 1s. A replay
+#   inside the window is always caught, a later one fails the timestamp
+#   check, and an honest client is never taken for a replay. Secured ("dd")
+#   handshakes have no timestamp and still use the Bloom filter below.
+# - "bloom": every handshake goes to the Bloom filter below, as in older
+#   versions. With the default error rate about 1 in 1000 honest FakeTLS
+#   clients is taken for a replay and sent to the fronting host.
+mode = "exact"
+# Memory budget of the exact cache. It is allocated as handshakes arrive,
+# about 80 bytes per remembered ClientHello, so 16mib holds about 210k of
+# them. That is enough for a sustained rate of 210k / (2 *
+# tolerate-time-skewness + 1s) authenticated handshakes per second, about
+# 850/s with a 2-minute window. Above that the oldest entries are dropped
+# before their window ends. Only
+# ClientHellos signed with a configured secret are stored, so a peer without
+# a secret cannot fill it.
+exact-max-size = "16mib"
+# max size of the Bloom filter. Please be aware that this number is
 # approximate we try hard to store data quite dense but it is possible
 # that we can go over this limit for 10-20% under some conditions and
 # architectures.
@@ -476,8 +496,8 @@ update-each = "24h"
 #
 # - A dd handshake has no timestamp. A FakeTLS ClientHello is accepted only
 #   within tolerate-time-skewness, but a captured dd handshake never expires.
-#   The only replay protection is the anti-replay cache ([defense.anti-replay],
-#   a Bloom filter): it forgets everything on restart and gradually forgets
+#   The only replay protection is the anti-replay cache ([defense.anti-replay];
+#   dd handshakes always use its Bloom filter): it forgets everything on restart and gradually forgets
 #   old entries as it fills up, after which an old handshake can be replayed
 #   to confirm that this is an MTProto proxy.
 # - 64 bytes of random-looking data as the very first message, without any

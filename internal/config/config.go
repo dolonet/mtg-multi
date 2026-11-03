@@ -53,8 +53,11 @@ type Config struct {
 		AntiReplay struct {
 			Optional
 
-			MaxSize   TypeBytes     `json:"maxSize"`
-			ErrorRate TypeErrorRate `json:"errorRate"`
+			// Mode is AntiReplayModeExact (default) or AntiReplayModeBloom.
+			Mode         string        `json:"mode"`
+			MaxSize      TypeBytes     `json:"maxSize"`
+			ErrorRate    TypeErrorRate `json:"errorRate"`
+			ExactMaxSize TypeBytes     `json:"exactMaxSize"`
 		} `json:"antiReplay"`
 		Blocklist    ListConfig `json:"blocklist"`
 		Allowlist    ListConfig `json:"allowlist"`
@@ -206,7 +209,36 @@ func (c *Config) Validate() error {
 		return err
 	}
 
+	switch c.GetAntiReplayMode() {
+	case AntiReplayModeExact, AntiReplayModeBloom:
+	default:
+		return fmt.Errorf("incorrect defense.anti-replay.mode %q: must be %s or %s",
+			c.Defense.AntiReplay.Mode, AntiReplayModeExact, AntiReplayModeBloom)
+	}
+
 	return c.validateWeb()
+}
+
+const (
+	// AntiReplayModeExact keeps FakeTLS ClientHellos in an exact cache for
+	// their whole timestamp window; secured ("dd") handshakes, which have no
+	// timestamp, stay in the Bloom filter.
+	AntiReplayModeExact = "exact"
+
+	// AntiReplayModeBloom keeps every handshake in the Bloom filter, as
+	// before the exact cache was added.
+	AntiReplayModeBloom = "bloom"
+)
+
+// GetAntiReplayMode returns the normalized defense.anti-replay.mode,
+// AntiReplayModeExact if it is not set.
+func (c *Config) GetAntiReplayMode() string {
+	mode := strings.ToLower(strings.TrimSpace(c.Defense.AntiReplay.Mode))
+	if mode == "" {
+		return AntiReplayModeExact
+	}
+
+	return mode
 }
 
 // validateWeb checks the [web] section. An empty bind-to disables the WEB

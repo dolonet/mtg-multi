@@ -43,6 +43,10 @@ var (
 	// proxy but anti replay cache value is undefined.
 	ErrAntiReplayCacheIsNotDefined = errors.New("anti-replay cache is not defined")
 
+	// ErrAntiReplayTTLTooShort is returned if the FakeTLS anti-replay cache
+	// forgets a ClientHello while its timestamp is still accepted.
+	ErrAntiReplayTTLTooShort = errors.New("FakeTLS anti-replay cache TTL is shorter than the timestamp window")
+
 	// ErrIPBlocklistIsNotDefined is returned if you are trying to create a proxy
 	// but ip blocklist instance is not defined.
 	ErrIPBlocklistIsNotDefined = errors.New("ip blocklist is not defined")

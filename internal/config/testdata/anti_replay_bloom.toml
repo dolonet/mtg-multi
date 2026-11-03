@@ -1,0 +1,8 @@
+secret = "7oe1GqLy6TBc38CV3jx7q09nb29nbGUuY29t"
+bind-to = "0.0.0.0:3128"
+
+[defense.anti-replay]
+enabled = true
+mode = "Bloom"
+max-size = "2mib"
+error-rate = 0.01
