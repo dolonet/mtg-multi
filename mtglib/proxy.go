@@ -71,6 +71,10 @@ type Proxy struct {
 	// serverHelloMSS > 0 splits the FakeTLS ServerHello (see
 	// server_hello_mss.go).
 	serverHelloMSS int
+
+	// serverHelloDelay is the pause before answering a FakeTLS ClientHello,
+	// on the ServerHello and the fronting paths alike.
+	serverHelloDelay serverHelloDelay
 }
 
 // DomainFrontingAddress returns a host:port pair for a fronting domain.
@@ -360,6 +364,7 @@ func (p *Proxy) doFakeTLSHandshake(ctx *streamContext) bool {
 			frontHost = result.MatchedHost
 		}
 
+		p.serverHelloDelay.wait(ctx)
 		p.doDomainFrontingForHost(ctx, rewind, frontHost)
 
 		return false
@@ -373,6 +378,7 @@ func (p *Proxy) doFakeTLSHandshake(ctx *streamContext) bool {
 	if p.fakeTLSAntiReplayCache.SeenBefore(result.Hello.Random[:]) {
 		p.logger.Warning("replay attack has been detected!")
 		p.eventStream.Send(p.ctx, NewEventReplayAttack(ctx.streamID))
+		p.serverHelloDelay.wait(ctx)
 		p.doDomainFrontingForHost(ctx, rewind, result.MatchedHost)
 
 		return false
@@ -396,6 +402,10 @@ func (p *Proxy) doFakeTLSHandshake(ctx *streamContext) bool {
 	var helloWriter io.Writer = ctx.clientConn
 	if p.serverHelloMSS > 0 {
 		helloWriter = fragmentedWriter{conn: ctx.clientConn, mss: p.serverHelloMSS}
+	}
+
+	if !p.serverHelloDelay.wait(ctx) {
+		return false
 	}
 
 	if err := fake.SendServerHello(helloWriter, matchedSecret.Key[:], result.Hello, noiseParams); err != nil {
@@ -769,6 +779,10 @@ func NewProxy(opts ProxyOpts) (*Proxy, error) {
 			opts.Network.MakeHTTPClient(nil),
 		),
 		domainFrontingProxyProtocol: opts.DomainFrontingProxyProtocol,
+		serverHelloDelay: serverHelloDelay{
+			min: opts.ServerHelloDelayMin,
+			max: opts.ServerHelloDelayMax,
+		},
 	}
 
 	proxy.secretSet.Store(set)

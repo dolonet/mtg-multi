@@ -322,6 +322,23 @@ type ProxyOpts struct {
 	//
 	// This is an optional setting.
 	ServerHelloMSS int
+
+	// ServerHelloDelayMin and ServerHelloDelayMax set a random pause before
+	// the server answers a FakeTLS ClientHello. ServerHelloDelayMax = 0
+	// (default) disables it.
+	//
+	// Without it a valid ClientHello gets its ServerHello at once, while any
+	// other one goes to the fronting host and gets its answer a round trip
+	// to the real site later, so the time to the first answer byte tells an
+	// authenticated client from a probe. The pause is applied on both paths
+	// alike: before the ServerHello, and before a ClientHello that failed
+	// authentication or was a replay is sent to the fronting host. It is
+	// log-normal between the bounds (uniform if ServerHelloDelayMin is 0)
+	// and must stay below HandshakeTimeout.
+	//
+	// This is an optional setting.
+	ServerHelloDelayMin time.Duration
+	ServerHelloDelayMax time.Duration
 }
 
 func (p ProxyOpts) valid() error {
@@ -355,6 +372,10 @@ func (p ProxyOpts) valid() error {
 		return err
 	}
 
+	if err := ValidateServerHelloDelay(p.ServerHelloDelayMin, p.ServerHelloDelayMax, p.getHandshakeTimeout()); err != nil {
+		return err
+	}
+
 	if p.BootTimeTimestampsBelow > BootTimeTimestampsMax {
 		return fmt.Errorf("%w: %v, the limit is %v",
 			ErrBootTimeTimestampsBelowTooLarge, p.BootTimeTimestampsBelow, BootTimeTimestampsMax)
@@ -365,6 +386,25 @@ func (p ProxyOpts) valid() error {
 			return fmt.Errorf("%w: %v, needs at least %v",
 				ErrAntiReplayTTLTooShort, cache.ReplayTTL(), needed)
 		}
+	}
+
+	return nil
+}
+
+// ValidateServerHelloDelay checks the ServerHello delay bounds: a disabled
+// delay (maxDelay = 0) must not have minDelay set, and an enabled one needs
+// minDelay <= maxDelay < handshakeTimeout.
+func ValidateServerHelloDelay(minDelay, maxDelay, handshakeTimeout time.Duration) error {
+	switch {
+	case minDelay < 0 || maxDelay < 0:
+		return fmt.Errorf("%w: negative bounds %v..%v", ErrServerHelloDelayInvalid, minDelay, maxDelay)
+	case maxDelay == 0 && minDelay > 0:
+		return fmt.Errorf("%w: min %v is set without max", ErrServerHelloDelayInvalid, minDelay)
+	case minDelay > maxDelay:
+		return fmt.Errorf("%w: min %v is over max %v", ErrServerHelloDelayInvalid, minDelay, maxDelay)
+	case maxDelay > 0 && maxDelay >= handshakeTimeout:
+		return fmt.Errorf("%w: max %v must be below the handshake timeout %v",
+			ErrServerHelloDelayInvalid, maxDelay, handshakeTimeout)
 	}
 
 	return nil

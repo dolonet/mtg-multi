@@ -377,7 +377,9 @@ func runProxy(
 		DCPoolSize:    conf.DCPool.Size.Get(0),
 		DCPoolDCs:     conf.DCPool.DCs,
 
-		ServerHelloMSS: serverHelloMSS,
+		ServerHelloMSS:      serverHelloMSS,
+		ServerHelloDelayMin: conf.Defense.ServerHelloDelay.Min.Get(0),
+		ServerHelloDelayMax: conf.Defense.ServerHelloDelay.Max.Get(0),
 	}
 
 	proxy, err := mtglib.NewProxy(opts)

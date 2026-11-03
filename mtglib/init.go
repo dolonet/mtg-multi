@@ -47,6 +47,10 @@ var (
 	// forgets a ClientHello while its timestamp is still accepted.
 	ErrAntiReplayTTLTooShort = errors.New("FakeTLS anti-replay cache TTL is shorter than the timestamp window")
 
+	// ErrServerHelloDelayInvalid is returned if the ServerHello delay bounds
+	// are inconsistent.
+	ErrServerHelloDelayInvalid = errors.New("invalid ServerHello delay")
+
 	// ErrBootTimeTimestampsBelowTooLarge is returned if
 	// ProxyOpts.BootTimeTimestampsBelow is over BootTimeTimestampsMax.
 	ErrBootTimeTimestampsBelowTooLarge = errors.New("boot-time timestamps limit is too large")

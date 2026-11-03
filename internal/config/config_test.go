@@ -243,6 +243,22 @@ func (suite *ConfigTestSuite) TestBootTimeTimestamps() {
 	suite.ErrorContains(conf.Validate(), "boot-time-timestamps-below")
 }
 
+func (suite *ConfigTestSuite) TestServerHelloDelay() {
+	conf, err := config.Parse(suite.ReadConfig("minimal.toml"))
+	suite.NoError(err)
+	suite.EqualValues(0, conf.Defense.ServerHelloDelay.Max.Get(0))
+
+	conf, err = config.Parse(suite.ReadConfig("server_hello_delay.toml"))
+	suite.NoError(err)
+	suite.NoError(conf.Validate())
+	suite.Equal(8*time.Millisecond, conf.Defense.ServerHelloDelay.Min.Get(0))
+	suite.Equal(24*time.Millisecond, conf.Defense.ServerHelloDelay.Max.Get(0))
+
+	conf, err = config.Parse(suite.ReadConfig("server_hello_delay_bad.toml"))
+	suite.NoError(err)
+	suite.ErrorIs(conf.Validate(), mtglib.ErrServerHelloDelayInvalid)
+}
+
 func (suite *ConfigTestSuite) TestSecuredDisabledByDefault() {
 	conf, err := config.Parse(suite.ReadConfig("minimal.toml"))
 	suite.NoError(err)

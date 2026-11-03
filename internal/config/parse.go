@@ -43,6 +43,10 @@ type tomlConfig struct {
 			ErrorRate    float64 `toml:"error-rate" json:"errorRate,omitempty"`
 			ExactMaxSize string  `toml:"exact-max-size" json:"exactMaxSize,omitempty"`
 		} `toml:"anti-replay" json:"antiReplay,omitempty"`
+		ServerHelloDelay struct {
+			Min string `toml:"min" json:"min,omitempty"`
+			Max string `toml:"max" json:"max,omitempty"`
+		} `toml:"server-hello-delay" json:"serverHelloDelay,omitempty"`
 		Blocklist struct {
 			Enabled             bool     `toml:"enabled" json:"enabled,omitempty"`
 			DownloadConcurrency uint     `toml:"download-concurrency" json:"downloadConcurrency,omitempty"`

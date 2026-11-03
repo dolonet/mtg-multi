@@ -1,0 +1,6 @@
+secret = "7oe1GqLy6TBc38CV3jx7q09nb29nbGUuY29t"
+bind-to = "0.0.0.0:3128"
+
+[defense.server-hello-delay]
+min = "8ms"
+max = "24ms"

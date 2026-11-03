@@ -395,3 +395,75 @@ func TestFakeTLSReplayTTLCoversWindow(t *testing.T) {
 		assert.False(t, covers(window, window), "window %v", window)
 	}
 }
+
+// The ServerHello delay is applied alike to an authenticated ClientHello, a
+// replay and a ClientHello that fails authentication, so the time to the
+// first answer does not tell them apart.
+func TestFakeTLSServerHelloDelayOnAllPaths(t *testing.T) {
+	t.Parallel()
+
+	const delay = 300 * time.Millisecond
+
+	delayed := startFakeTLSProxy(t, func(opts *mtglib.ProxyOpts) {
+		opts.ServerHelloDelayMin = delay
+		opts.ServerHelloDelayMax = delay
+		withExactAntiReplay(opts)
+	})
+
+	now := unixNow()
+	hello := fakeTLSClientHello(t, now, 1)
+
+	served := delayed.handshake(t, hello)
+	require.True(t, served.served)
+	assert.GreaterOrEqual(t, served.elapsed, delay, "ServerHello")
+
+	replay := delayed.handshake(t, hello)
+	require.False(t, replay.served)
+	assert.GreaterOrEqual(t, replay.elapsed, delay, "replay")
+
+	stale := delayed.handshake(t, fakeTLSClientHello(t, now-3600, 2))
+	require.False(t, stale.served)
+	assert.GreaterOrEqual(t, stale.elapsed, delay, "bad timestamp")
+
+	forged := fakeTLSClientHello(t, now, 3)
+	forged[clientHelloRandomOffset] ^= 0xff
+
+	bad := delayed.handshake(t, forged)
+	require.False(t, bad.served)
+	assert.GreaterOrEqual(t, bad.elapsed, delay, "bad digest")
+
+	// Off by default: both paths answer well before the delay above.
+	plain := startFakeTLSProxy(t, withExactAntiReplay)
+	hello = fakeTLSClientHello(t, now, 4)
+
+	served = plain.handshake(t, hello)
+	require.True(t, served.served)
+	assert.Less(t, served.elapsed, delay, "ServerHello without delay")
+
+	replay = plain.handshake(t, hello)
+	require.False(t, replay.served)
+	assert.Less(t, replay.elapsed, delay, "replay without delay")
+}
+
+func TestFakeTLSServerHelloDelayValidation(t *testing.T) {
+	t.Parallel()
+
+	dialer, err := network.NewDefaultDialer(0, 0)
+	require.NoError(t, err)
+
+	ntw, err := network.NewNetwork(dialer, "mtgtest", "1.1.1.1", 0)
+	require.NoError(t, err)
+
+	_, err = mtglib.NewProxy(mtglib.ProxyOpts{
+		Secret:              mtglib.GenerateSecret("example.com"),
+		Network:             ntw,
+		AntiReplayCache:     antireplay.NewNoop(),
+		IPBlocklist:         ipblocklist.NewNoop(),
+		IPAllowlist:         ipblocklist.NewNoop(),
+		EventStream:         events.NewNoopStream(),
+		Logger:              logger.NewNoopLogger(),
+		HandshakeTimeout:    time.Second,
+		ServerHelloDelayMax: time.Second,
+	})
+	require.ErrorIs(t, err, mtglib.ErrServerHelloDelayInvalid)
+}

@@ -61,6 +61,10 @@ type Config struct {
 			ErrorRate    TypeErrorRate `json:"errorRate"`
 			ExactMaxSize TypeBytes     `json:"exactMaxSize"`
 		} `json:"antiReplay"`
+		ServerHelloDelay struct {
+			Min TypeDuration `json:"min"`
+			Max TypeDuration `json:"max"`
+		} `json:"serverHelloDelay"`
 		Blocklist    ListConfig `json:"blocklist"`
 		Allowlist    ListConfig `json:"allowlist"`
 		Doppelganger struct {
@@ -214,6 +218,14 @@ func (c *Config) Validate() error {
 	if v := c.BootTimeTimestampsBelow.Get(0); v > mtglib.BootTimeTimestampsMax {
 		return fmt.Errorf("boot-time-timestamps-below must be at most %v, got %v",
 			mtglib.BootTimeTimestampsMax, v)
+	}
+
+	if err := mtglib.ValidateServerHelloDelay(
+		c.Defense.ServerHelloDelay.Min.Get(0),
+		c.Defense.ServerHelloDelay.Max.Get(0),
+		c.Network.Timeout.Handshake.Get(mtglib.DefaultHandshakeTimeout),
+	); err != nil {
+		return fmt.Errorf("incorrect defense.server-hello-delay section: %w", err)
 	}
 
 	switch c.GetAntiReplayMode() {

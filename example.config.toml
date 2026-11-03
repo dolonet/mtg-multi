@@ -445,6 +445,26 @@ max-size = "1mib"
 # to maintain a desired error ratio.
 error-rate = 0.001
 
+# A random pause before the server answers a FakeTLS ClientHello. Without
+# it a valid ClientHello gets its ServerHello at once, while a probe goes to
+# the fronting host and gets its answer a round trip to the real site later,
+# so the time to the first answer byte tells the proxy from the site. The
+# pause is the same on both paths: before the ServerHello, and before a
+# ClientHello that failed authentication or was a replay is sent to the
+# fronting host. Secured ("dd") handshakes are not affected.
+#
+# The pause is log-normal between min and max, with the median at
+# sqrt(min * max) and about 1% of the samples clamped to each bound; with
+# min = 0 it is uniform in [0, max]. Pick bounds around the round trip
+# from your clients to the fronting site; telemt uses 8ms..24ms. max must
+# be below network.timeout.handshake. It costs each new connection that
+# much latency, once.
+#
+# Disabled by default (max = 0).
+[defense.server-hello-delay]
+# min = "8ms"
+# max = "24ms"
+
 # You can protect proxies by using different blocklists. If client has
 # ip from the given range, we do not try to do a proper handshake. We
 # actually route it to fronting domain. So, this client will never ever
