@@ -1,0 +1,40 @@
+package network
+
+import (
+	"net"
+	"strconv"
+	"testing"
+	"time"
+
+	"github.com/dolonet/mtg-multi/mtglib"
+	"github.com/stretchr/testify/require"
+)
+
+// New keeps the exact v1.14.0 function type, including assignments by callers.
+var _ func(*net.Resolver, string, time.Duration, time.Duration, time.Duration,
+	net.KeepAliveConfig, int) mtglib.Network = New
+
+func TestConstructorCompatibility(t *testing.T) {
+	t.Parallel()
+
+	legacy, ok := New(nil, "", 0, 0, 0, DefaultKeepAliveConfig, 0).(*network)
+	require.True(t, ok)
+	require.Equal(t, DefaultTCPNotSentLowat, legacy.tcpNotSentLowat)
+
+	for _, value := range []int{0, -1, 4096} {
+		t.Run(strconv.Itoa(value), func(t *testing.T) {
+			current, ok := NewWithTCPNotSentLowat(nil, "", 0, 0, 0,
+				DefaultKeepAliveConfig, value).(*network)
+			require.True(t, ok)
+			want := value
+			if value == 0 {
+				want = DefaultTCPNotSentLowat
+			}
+			require.Equal(t, want, current.tcpNotSentLowat)
+
+			legacy, ok := New(nil, "", 0, 0, 0, DefaultKeepAliveConfig, value).(*network)
+			require.True(t, ok)
+			require.Equal(t, want, legacy.tcpNotSentLowat)
+		})
+	}
+}

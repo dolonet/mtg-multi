@@ -1,3 +1,5 @@
+//go:build linux
+
 package mtglib
 
 import (
@@ -13,7 +15,7 @@ import (
 func TestAcceptWithRetrySkipsAcceptedConnErrors(t *testing.T) {
 	t.Parallel()
 
-	for _, errno := range []syscall.Errno{syscall.EHOSTUNREACH, syscall.ENETUNREACH, syscall.EPROTO} {
+	for _, errno := range []syscall.Errno{syscall.ENETDOWN, syscall.EPROTO, syscall.ENOPROTOOPT, syscall.EHOSTDOWN, syscall.ENONET, syscall.EHOSTUNREACH, syscall.EOPNOTSUPP, syscall.ENETUNREACH} {
 		wrapped := &net.OpError{Op: "accept", Err: os.NewSyscallError("accept4", errno)}
 		listener := &scriptedListener{results: []error{wrapped, wrapped, nil}}
 
