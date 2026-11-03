@@ -394,7 +394,7 @@ func TestReaddedUserCountersStayConsistent(t *testing.T) {
 	require.NoError(t, err)
 
 	// This is how the old session finishes in ServeConn.
-	old.userStats.connections.Add(-1)
+	old.userStats.endSession(old.clientAddr)
 	p.sessions.remove(old)
 
 	assert.Zero(t, p.stats.lookup("alice").connections.Load())

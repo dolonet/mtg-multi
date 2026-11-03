@@ -151,6 +151,8 @@ func (p *Proxy) ServeConn(conn essentials.Conn) {
 		return
 	}
 
+	ctx.clientAddr = clientAddr(ctx.ClientIP())
+
 	if !p.trackSession(ctx) {
 		ctx.logger.Info("secret was removed or changed during handshake")
 		return
@@ -159,7 +161,7 @@ func (p *Proxy) ServeConn(conn essentials.Conn) {
 
 	p.stats.UpdateLastSeen(ctx.secretName)
 
-	defer ctx.userStats.connections.Add(-1)
+	defer ctx.userStats.endSession(ctx.clientAddr)
 
 	// FakeTLS specifics: the doppelganger wrapper and a separate obfuscated2
 	// handshake inside the unwrapped TLS stream. A secured client has already
@@ -807,7 +809,7 @@ func (p *Proxy) trackSession(ctx *streamContext) bool {
 
 	p.sessions.add(ctx)
 	ctx.userStats = p.stats.getOrCreate(ctx.secretName)
-	ctx.userStats.connections.Add(1)
+	ctx.userStats.startSession(ctx.clientAddr)
 
 	return true
 }

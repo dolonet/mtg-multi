@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"net"
+	"net/netip"
 	"time"
 
 	"github.com/dolonet/mtg-multi/essentials"
@@ -23,7 +24,10 @@ type streamContext struct {
 	// userStats is the stats entry this session is counted in. It is the one
 	// decremented: after a user is removed and added back, a lookup by name
 	// would find the new entry and drive its counter negative.
-	userStats     *secretStats
+	userStats *secretStats
+	// clientAddr is the client address the session is counted under in
+	// userStats.ips. It is kept so the same address is uncounted at the end.
+	clientAddr    netip.Addr
 	streamID      string
 	dc            int
 	matchedSecret Secret

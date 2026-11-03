@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,6 +18,106 @@ type secretStats struct {
 	bytesIn     atomic.Int64
 	bytesOut    atomic.Int64
 	lastSeen    atomic.Value // stores time.Time
+
+	// ips counts the live sessions of this secret per client address. An
+	// address is removed when its last session ends, and the map itself is
+	// dropped when it becomes empty, so it never holds more entries than
+	// there are live sessions. It is touched once when a session starts and
+	// once when it ends, never on the relay path.
+	ipsMu sync.Mutex
+	ips   map[netip.Addr]int
+}
+
+// clientAddr converts a client IP to the key of secretStats.ips. An
+// IPv4-mapped IPv6 address becomes plain IPv4. An unknown (nil or
+// unspecified) address gives the zero Addr, which is not tracked.
+func clientAddr(ip net.IP) netip.Addr {
+	addr, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return netip.Addr{}
+	}
+
+	// net.IP keeps IPv4 in 16 bytes as ::ffff:a.b.c.d: unmap first, or
+	// 0.0.0.0 would not look unspecified.
+	addr = addr.Unmap()
+	if addr.IsUnspecified() {
+		return netip.Addr{}
+	}
+
+	return addr
+}
+
+// addIP counts a new session from addr. The zero Addr is ignored.
+func (st *secretStats) addIP(addr netip.Addr) {
+	if !addr.IsValid() {
+		return
+	}
+
+	st.ipsMu.Lock()
+	defer st.ipsMu.Unlock()
+
+	if st.ips == nil {
+		st.ips = make(map[netip.Addr]int, 1)
+	}
+
+	st.ips[addr]++
+}
+
+// removeIP uncounts a finished session from addr. The zero Addr is ignored.
+func (st *secretStats) removeIP(addr netip.Addr) {
+	if !addr.IsValid() {
+		return
+	}
+
+	st.ipsMu.Lock()
+	defer st.ipsMu.Unlock()
+
+	switch n := st.ips[addr]; {
+	case n > 1:
+		st.ips[addr] = n - 1
+	case n == 1:
+		delete(st.ips, addr)
+
+		if len(st.ips) == 0 {
+			// Go maps do not shrink: drop the map so a burst of addresses
+			// does not keep its memory after it is gone.
+			st.ips = nil
+		}
+	}
+}
+
+// startSession counts a session that has passed the handshake.
+func (st *secretStats) startSession(addr netip.Addr) {
+	st.connections.Add(1)
+	st.addIP(addr)
+}
+
+// endSession uncounts a session counted by startSession.
+func (st *secretStats) endSession(addr netip.Addr) {
+	st.removeIP(addr)
+	st.connections.Add(-1)
+}
+
+// activeIPs returns the client addresses with live sessions, sorted
+// numerically (IPv4 before IPv6). It is never nil, so JSON gets [] rather
+// than null.
+func (st *secretStats) activeIPs() []string {
+	st.ipsMu.Lock()
+	addrs := make([]netip.Addr, 0, len(st.ips))
+
+	for addr := range st.ips {
+		addrs = append(addrs, addr)
+	}
+	st.ipsMu.Unlock()
+
+	slices.SortFunc(addrs, netip.Addr.Compare)
+
+	out := make([]string, len(addrs))
+	for i, addr := range addrs {
+		out[i] = addr.String()
+	}
+
+	return out
 }
 
 // ProxyStats tracks per-secret connection stats with atomic counters.
@@ -283,6 +385,9 @@ type UserStatsJSON struct {
 	BytesIn     int64      `json:"bytes_in"`
 	BytesOut    int64      `json:"bytes_out"`
 	LastSeen    *time.Time `json:"last_seen"`
+	// ActiveIPs lists the client addresses with live sessions of this user,
+	// each address once however many sessions it has.
+	ActiveIPs []string `json:"active_ips"`
 }
 
 func (s *ProxyStats) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -308,6 +413,7 @@ func (s *ProxyStats) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			BytesIn:     st.bytesIn.Load(),
 			BytesOut:    st.bytesOut.Load(),
 			LastSeen:    lastSeenPtr,
+			ActiveIPs:   st.activeIPs(),
 		}
 	}
 
