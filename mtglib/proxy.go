@@ -66,6 +66,9 @@ type Proxy struct {
 	// serverHelloMSS > 0 splits the FakeTLS ServerHello (see
 	// server_hello_mss.go).
 	serverHelloMSS int
+
+	// usageStateFile is where quota usage is saved, empty for none.
+	usageStateFile string
 }
 
 // DomainFrontingAddress returns a host:port pair for a fronting domain.
@@ -154,7 +157,7 @@ func (p *Proxy) ServeConn(conn essentials.Conn) {
 	ctx.clientAddr = clientAddr(ctx.ClientIP())
 
 	if !p.trackSession(ctx) {
-		ctx.logger.Info("secret was removed or changed during handshake")
+		ctx.logger.Info("secret was removed, changed or rejected by its limits during handshake")
 		return
 	}
 	defer p.sessions.remove(ctx)
@@ -294,6 +297,9 @@ func (p *Proxy) Shutdown() {
 	if p.dcPool != nil {
 		p.dcPool.Shutdown()
 	}
+
+	// All streams are done: the counters are final.
+	p.flushUsage()
 }
 
 func (p *Proxy) doFakeTLSHandshake(ctx *streamContext) bool {
@@ -369,6 +375,15 @@ func (p *Proxy) doFakeTLSHandshake(ctx *streamContext) bool {
 	ctx.secretName = set.names[result.MatchedIndex]
 	ctx.logger = ctx.logger.BindStr("secret_name", ctx.secretName)
 
+	// A secret rejected by its limits gets exactly what a wrong secret gets:
+	// the fronting domain, before any byte of the ServerHello.
+	if state := p.limitDenial(set, ctx.secretName); state != LimitOK {
+		ctx.logger.BindStr("limit", state.String()).Info("secret is rejected by its limits")
+		p.doDomainFrontingForHost(ctx, rewind, result.MatchedHost)
+
+		return false
+	}
+
 	gangerNoise := p.doppelGanger.NoiseParams()
 	noiseParams := fake.NoiseParams{Mean: gangerNoise.Mean, Jitter: gangerNoise.Jitter}
 
@@ -439,6 +454,12 @@ func (p *Proxy) doSecuredHandshake(ctx *streamContext, rewind *connRewind, set *
 		p.eventStream.Send(p.ctx, NewEventReplayAttack(ctx.streamID))
 
 		return errors.New("replay attack has been detected")
+	}
+
+	// A secret rejected by its limits is fronted like a wrong one: the
+	// recorded bytes must still be there for the replay.
+	if state := p.limitDenial(set, set.names[idx]); state != LimitOK {
+		return fmt.Errorf("secret %q is rejected by its limits: %s", set.names[idx], state)
 	}
 
 	// Authenticated: stop recording the stream for replay.
@@ -689,12 +710,27 @@ func NewProxy(opts ProxyOpts) (*Proxy, error) {
 	logger := opts.getLogger("proxy")
 	updatersLogger := logger.Named("telegram-updaters")
 
-	set := newSecretSet(opts.getSecrets())
+	set, err := newSecretSetWithLimits(opts.getSecrets(), opts.SecretLimits)
+	if err != nil {
+		cancel()
+
+		return nil, fmt.Errorf("invalid settings: %w", err)
+	}
 
 	stats := NewProxyStats()
 	for _, name := range set.names {
 		stats.PreRegister(name)
 	}
+
+	if opts.UsageStateFile != "" {
+		// A broken file must not keep the proxy down: the usage starts from
+		// zero, as without the file.
+		if err := stats.LoadUsage(opts.UsageStateFile, set.limits); err != nil {
+			logger.WarningError("cannot load usage state, quota usage starts from zero", err)
+		}
+	}
+
+	stats.setLimits(set.limits)
 
 	if opts.APIBindTo != "" {
 		stats.StartServer(ctx, opts.APIBindTo, logger)
@@ -749,10 +785,12 @@ func NewProxy(opts ProxyOpts) (*Proxy, error) {
 			opts.Network.MakeHTTPClient(nil),
 		),
 		domainFrontingProxyProtocol: opts.DomainFrontingProxyProtocol,
+		usageStateFile:              opts.UsageStateFile,
 	}
 
 	proxy.secretSet.Store(set)
 	stats.SetSecretsDigest(set.digest())
+	proxy.startLimitsLoop(opts.getSecretLimitsCheckInterval())
 	proxy.doppelGanger.Run()
 
 	if opts.AutoUpdate {
@@ -803,7 +841,15 @@ func (p *Proxy) trackSession(ctx *streamContext) bool {
 	p.sessions.mu.Lock()
 	defer p.sessions.mu.Unlock()
 
-	if !p.secretSet.Load().sameSecret(ctx.secretName, ctx.matchedSecret) {
+	set := p.secretSet.Load()
+	if !set.sameSecret(ctx.secretName, ctx.matchedSecret) {
+		return false
+	}
+
+	// The limits may have changed since the handshake checked them. The
+	// check is under the registry lock, like in enforceLimits, so a session
+	// is either rejected here or seen and closed there.
+	if p.limitDenial(set, ctx.secretName) != LimitOK {
 		return false
 	}
 
@@ -820,7 +866,34 @@ func (p *Proxy) trackSession(ctx *streamContext) bool {
 // are kept unchanged continue to work; sessions of removed secrets and of
 // secrets whose key or host has changed are closed. Other options (bind
 // addresses, domain fronting, defense settings) are not affected.
+//
+// The limits of the secrets that are kept stay as they are; new secrets have
+// no limits. Use UpdateSecretsWithLimits to change the limits too.
 func (p *Proxy) UpdateSecrets(secrets map[string]Secret) (SecretsUpdate, error) {
+	var limits map[string]SecretLimits
+
+	for name, lim := range p.secretSet.Load().limits {
+		if _, ok := secrets[name]; !ok {
+			continue
+		}
+
+		if limits == nil {
+			limits = make(map[string]SecretLimits)
+		}
+
+		limits[name] = lim
+	}
+
+	return p.UpdateSecretsWithLimits(secrets, limits)
+}
+
+// UpdateSecretsWithLimits is UpdateSecrets that also replaces the limits of
+// the secrets (see ProxyOpts.SecretLimits); a secret absent from limits has
+// none. Live sessions of secrets that the new limits reject (disabled, expired
+// or over quota) are closed as well. Quota usage of a kept secret survives
+// the update; a removed secret, or a quota that is removed, starts from zero
+// when it comes back.
+func (p *Proxy) UpdateSecretsWithLimits(secrets map[string]Secret, limits map[string]SecretLimits) (SecretsUpdate, error) {
 	update := SecretsUpdate{}
 
 	if len(secrets) == 0 {
@@ -833,7 +906,10 @@ func (p *Proxy) UpdateSecrets(secrets map[string]Secret) (SecretsUpdate, error) 
 		}
 	}
 
-	next := newSecretSet(secrets)
+	next, err := newSecretSetWithLimits(secrets, limits)
+	if err != nil {
+		return update, err
+	}
 
 	for _, name := range next.names {
 		p.stats.PreRegister(name)
@@ -871,6 +947,9 @@ func (p *Proxy) UpdateSecrets(secrets map[string]Secret) (SecretsUpdate, error) 
 		p.stats.Forget(name)
 	}
 
+	p.stats.setLimits(next.limits)
+	limited := p.limitedSessionsLocked(next)
+
 	p.sessions.mu.Unlock()
 
 	for _, name := range next.names {
@@ -883,7 +962,100 @@ func (p *Proxy) UpdateSecrets(secrets map[string]Secret) (SecretsUpdate, error) 
 		ctx.closeFromOutside()
 	}
 
+	for _, ctx := range limited {
+		ctx.closeFromOutside()
+	}
+
 	update.ClosedSessions = len(toClose)
+	update.LimitedSessions = len(limited)
 
 	return update, nil
+}
+
+// limitDenial checks the limits of a secret that has just authenticated. A
+// secret without limits costs one lookup in a nil map.
+func (p *Proxy) limitDenial(set *secretSet, name string) LimitState {
+	lim, ok := set.limits[name]
+	if !ok {
+		return LimitOK
+	}
+
+	return limitState(lim, p.stats.lookup(name), p.stats.now())
+}
+
+// limitedSessionsLocked takes out of the registry the live sessions whose
+// secret is rejected by its limits in set and returns them, to be closed by
+// the caller once the lock is released (as UpdateSecrets does, so a session is
+// closed once). The caller holds p.sessions.mu.
+func (p *Proxy) limitedSessionsLocked(set *secretSet) []*streamContext {
+	var limited []*streamContext
+
+	now := p.stats.now()
+
+	for name, lim := range set.limits {
+		if limitState(lim, p.stats.lookup(name), now) == LimitOK {
+			continue
+		}
+
+		for ctx := range p.sessions.sessions[name] {
+			limited = append(limited, ctx)
+		}
+
+		delete(p.sessions.sessions, name)
+	}
+
+	return limited
+}
+
+// enforceLimits closes the live sessions of secrets that their limits reject
+// now: a secret that has expired or gone over its quota since the session
+// started. It returns the number of closed sessions.
+func (p *Proxy) enforceLimits() int {
+	p.sessions.mu.Lock()
+	limited := p.limitedSessionsLocked(p.secretSet.Load())
+	p.sessions.mu.Unlock()
+
+	for _, ctx := range limited {
+		ctx.closeFromOutside()
+	}
+
+	return len(limited)
+}
+
+// flushUsage saves the quota usage, if a usage state file is set.
+func (p *Proxy) flushUsage() {
+	if p.usageStateFile == "" {
+		return
+	}
+
+	if err := p.stats.FlushUsage(p.usageStateFile); err != nil {
+		p.logger.WarningError("cannot save usage state", err)
+	}
+}
+
+// startLimitsLoop checks live sessions against the limits of their secrets
+// every interval and saves the quota usage. With no limits configured a tick
+// is one atomic load and a range over a nil map.
+func (p *Proxy) startLimitsLoop(interval time.Duration) {
+	p.streamWaitGroup.Add(1)
+
+	go func() {
+		defer p.streamWaitGroup.Done()
+
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-p.ctx.Done():
+				return
+			case <-ticker.C:
+				if closed := p.enforceLimits(); closed > 0 {
+					p.logger.BindInt("closed_sessions", closed).Info("sessions are closed by secret limits")
+				}
+
+				p.flushUsage()
+			}
+		}
+	}()
 }

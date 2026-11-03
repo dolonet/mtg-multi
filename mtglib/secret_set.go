@@ -3,6 +3,7 @@ package mtglib
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -17,6 +18,38 @@ type secretSet struct {
 	hostnames []string
 	keys      [][]byte
 	byName    map[string]Secret
+	// limits holds the limits of the secrets that have any, by name; nil
+	// when no secret is limited. It is swapped together with the secrets, so
+	// a handshake checks the limits of the very secret it has matched.
+	limits map[string]SecretLimits
+}
+
+// newSecretSetWithLimits is newSecretSet with per-secret limits. Every name
+// in limits must be a secret of the set.
+func newSecretSetWithLimits(secrets map[string]Secret, limits map[string]SecretLimits) (*secretSet, error) {
+	set := newSecretSet(secrets)
+
+	for name, lim := range limits {
+		if _, ok := set.byName[name]; !ok {
+			return nil, fmt.Errorf("limits of unknown secret %q", name)
+		}
+
+		if err := lim.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid limits of secret %q: %w", name, err)
+		}
+
+		if lim.IsZero() {
+			continue
+		}
+
+		if set.limits == nil {
+			set.limits = make(map[string]SecretLimits, len(limits))
+		}
+
+		set.limits[name] = lim
+	}
+
+	return set, nil
 }
 
 func newSecretSet(secrets map[string]Secret) *secretSet {
@@ -91,6 +124,10 @@ type SecretsUpdate struct {
 	// ClosedSessions is the number of live sessions that were closed because
 	// their secret was removed or changed.
 	ClosedSessions int
+	// LimitedSessions is the number of live sessions that were closed because
+	// the new limits of their secret reject it (disabled, expired or over
+	// quota).
+	LimitedSessions int
 }
 
 // sessionRegistry tracks authenticated sessions per secret name, so that

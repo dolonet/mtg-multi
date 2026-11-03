@@ -295,6 +295,31 @@ type ProxyOpts struct {
 	//
 	// This is an optional setting.
 	ServerHelloMSS int
+
+	// SecretLimits are per-secret limits by secret name: a traffic quota with
+	// an optional reset period, an expiry time and a disable switch. A secret
+	// absent here has no limits. A new connection of a rejected secret is
+	// treated like a connection with a wrong secret (domain fronting); live
+	// sessions are closed when the secret is disabled or expires, or within
+	// SecretLimitsCheckInterval after it goes over its quota. Every name must
+	// be a secret of the proxy.
+	//
+	// This is an optional setting.
+	SecretLimits map[string]SecretLimits
+
+	// SecretLimitsCheckInterval is how often live sessions are checked against
+	// SecretLimits and the usage state file is written. Defaults to
+	// DefaultSecretLimitsCheckInterval.
+	//
+	// This is an optional setting.
+	SecretLimitsCheckInterval time.Duration
+
+	// UsageStateFile is a JSON file the quota usage is saved to, every
+	// SecretLimitsCheckInterval and on Shutdown, and restored from on start.
+	// Without it the quota usage starts from zero on every start.
+	//
+	// This is an optional setting.
+	UsageStateFile string
 }
 
 func (p ProxyOpts) valid() error {
@@ -453,6 +478,14 @@ func (p ProxyOpts) getThrottleCheckInterval() time.Duration {
 	}
 
 	return p.ThrottleCheckInterval
+}
+
+func (p ProxyOpts) getSecretLimitsCheckInterval() time.Duration {
+	if p.SecretLimitsCheckInterval <= 0 {
+		return DefaultSecretLimitsCheckInterval
+	}
+
+	return p.SecretLimitsCheckInterval
 }
 
 func (p ProxyOpts) getLogger(name string) Logger {

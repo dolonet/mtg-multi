@@ -26,6 +26,15 @@ type secretStats struct {
 	// once when it ends, never on the relay path.
 	ipsMu sync.Mutex
 	ips   map[netip.Addr]int
+
+	// quota is the quota accounting of this secret, if it has a quota. It is
+	// derived from bytesIn and bytesOut, see quotaState.
+	quota quotaState
+}
+
+// quotaUsed returns the traffic of this secret in the current quota period.
+func (st *secretStats) quotaUsed(lim SecretLimits, now time.Time) int64 {
+	return st.quota.used(lim.QuotaReset, st.bytesIn.Load()+st.bytesOut.Load(), now)
 }
 
 // clientAddr converts a client IP to the key of secretStats.ips. An
@@ -136,6 +145,17 @@ type ProxyStats struct {
 
 	// secretsDigest is the fingerprint of the secret set (see secretSet.digest).
 	secretsDigest atomic.Value // string
+
+	// limits are the limits of the current secret set, for /stats. A name
+	// absent here has no limits.
+	limits atomic.Pointer[map[string]SecretLimits]
+
+	// now is the clock of the limits (expiry, quota periods); tests replace
+	// it before the stats are used.
+	now func() time.Time
+
+	// usageMu serializes writes of the usage state file.
+	usageMu sync.Mutex
 }
 
 // NewProxyStats creates a new ProxyStats instance.
@@ -143,6 +163,7 @@ func NewProxyStats() *ProxyStats {
 	return &ProxyStats{
 		users:     make(map[string]*secretStats),
 		startedAt: time.Now(),
+		now:       time.Now,
 	}
 }
 
@@ -269,6 +290,35 @@ func (s *ProxyStats) SetSecretsDigest(digest string) {
 	s.secretsDigest.Store(digest)
 }
 
+// setLimits publishes the limits of a new secret set. Quotas that appear start
+// counting from zero at once, so traffic of live sessions after the change is
+// counted; quotas that are gone forget their usage.
+func (s *ProxyStats) setLimits(limits map[string]SecretLimits) {
+	s.limits.Store(&limits)
+
+	now := s.now()
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for name, st := range s.users {
+		if lim := limits[name]; lim.QuotaBytes > 0 {
+			st.quotaUsed(lim, now)
+		} else {
+			st.quota.drop()
+		}
+	}
+}
+
+// secretLimits returns the published limits of name.
+func (s *ProxyStats) secretLimits(name string) SecretLimits {
+	if limits := s.limits.Load(); limits != nil {
+		return (*limits)[name]
+	}
+
+	return SecretLimits{}
+}
+
 // startThrottleLoop runs a background goroutine that recomputes per-user
 // caps every throttleInterval.
 func (s *ProxyStats) startThrottleLoop(ctx context.Context, logger Logger) {
@@ -388,6 +438,49 @@ type UserStatsJSON struct {
 	// ActiveIPs lists the client addresses with live sessions of this user,
 	// each address once however many sessions it has.
 	ActiveIPs []string `json:"active_ips"`
+
+	// State is what the limits of the user say about a new connection: ok,
+	// disabled, expired or over_quota.
+	State string `json:"state"`
+	// Enabled is false when the user is disabled in the limits.
+	Enabled bool `json:"enabled"`
+	// QuotaBytes is the traffic allowed per quota period; absent without a
+	// quota.
+	QuotaBytes int64 `json:"quota_bytes,omitempty"`
+	// QuotaUsed is the traffic used in the current period (bytes in + out);
+	// absent without a quota.
+	QuotaUsed *int64 `json:"quota_used,omitempty"`
+	// QuotaReset is none, daily, weekly or monthly; absent without a quota.
+	QuotaReset string `json:"quota_reset,omitempty"`
+	// QuotaResetsAt is when the used traffic starts from zero again; absent
+	// without a quota or with quota_reset = none.
+	QuotaResetsAt *time.Time `json:"quota_resets_at,omitempty"`
+	// ExpiresAt is when the user stops working; absent if never.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+}
+
+// fillLimits adds the limit fields of one user to its stats.
+func (u *UserStatsJSON) fillLimits(lim SecretLimits, st *secretStats, now time.Time) {
+	u.State = limitState(lim, st, now).String()
+	u.Enabled = !lim.Disabled
+
+	if !lim.ExpiresAt.IsZero() {
+		expires := lim.ExpiresAt.UTC()
+		u.ExpiresAt = &expires
+	}
+
+	if lim.QuotaBytes == 0 {
+		return
+	}
+
+	used := st.quotaUsed(lim, now)
+	u.QuotaBytes = lim.QuotaBytes
+	u.QuotaUsed = &used
+	u.QuotaReset = lim.QuotaReset.String()
+
+	if resetsAt := lim.QuotaReset.nextReset(now); !resetsAt.IsZero() {
+		u.QuotaResetsAt = &resetsAt
+	}
 }
 
 func (s *ProxyStats) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -397,6 +490,7 @@ func (s *ProxyStats) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var totalConns int64
 
 	users := make(map[string]UserStatsJSON, len(s.users))
+	now := s.now()
 
 	for name, st := range s.users {
 		conns := st.connections.Load()
@@ -408,13 +502,16 @@ func (s *ProxyStats) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			lastSeenPtr = &lastSeen
 		}
 
-		users[name] = UserStatsJSON{
+		user := UserStatsJSON{
 			Connections: conns,
 			BytesIn:     st.bytesIn.Load(),
 			BytesOut:    st.bytesOut.Load(),
 			LastSeen:    lastSeenPtr,
 			ActiveIPs:   st.activeIPs(),
 		}
+		user.fillLimits(s.secretLimits(name), st, now)
+
+		users[name] = user
 	}
 
 	var throttle *ThrottleJSON
