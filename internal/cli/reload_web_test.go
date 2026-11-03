@@ -119,3 +119,20 @@ func TestReloadWithWebProxyErrorKeepsWeb(t *testing.T) {
 	assert.True(t, webLinkOpens(t, srv, alice))
 	assert.False(t, webLinkOpens(t, srv, carol))
 }
+
+// The limits pass through the WEB wrapper to the proxy unchanged.
+func TestReloadWithWebForwardsLimits(t *testing.T) {
+	t.Parallel()
+
+	alice := mtglib.GenerateSecret("example.com")
+	srv := newReloadWebServer(t, map[string]mtglib.Secret{"alice": alice})
+	proxy := &fakeSecretsUpdater{}
+	limits := map[string]mtglib.SecretLimits{"alice": {Disabled: true}}
+
+	_, err := reloadWithWeb{proxy: proxy, web: srv, logger: logger.NewNoopLogger()}.
+		UpdateSecretsWithLimits(map[string]mtglib.Secret{"alice": alice}, limits)
+	require.NoError(t, err)
+
+	require.Len(t, proxy.limits, 1)
+	assert.Equal(t, limits, proxy.limits[0])
+}

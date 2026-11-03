@@ -4,26 +4,30 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
 )
 
 type tomlConfig struct {
-	Debug                       bool              `toml:"debug" json:"debug,omitempty"`
-	AllowFallbackOnUnknownDC    bool              `toml:"allow-fallback-on-unknown-dc" json:"allowFallbackOnUnknownDc,omitempty"`
-	Secret                      string            `toml:"secret" json:"secret,omitempty"`
-	Secrets                     map[string]string `toml:"secrets" json:"secrets,omitempty"`
-	BindTo                      any               `toml:"bind-to" json:"bindTo"`
-	ProxyProtocolListener       bool              `toml:"proxy-protocol-listener" json:"proxyProtocolListener"`
-	PreferIP                    string            `toml:"prefer-ip" json:"preferIp,omitempty"`
-	AutoUpdate                  bool              `toml:"auto-update" json:"autoUpdate,omitempty"`
-	DomainFrontingPort          uint              `toml:"domain-fronting-port" json:"domainFrontingPort,omitempty"`
-	DomainFrontingIP            string            `toml:"domain-fronting-ip" json:"domainFrontingIp,omitempty"`
-	DomainFrontingProxyProtocol bool              `toml:"domain-fronting-proxy-protocol" json:"domainFrontingProxyProtocol,omitempty"`
-	TolerateTimeSkewness        string            `toml:"tolerate-time-skewness" json:"tolerateTimeSkewness,omitempty"`
-	Concurrency                 uint              `toml:"concurrency" json:"concurrency,omitempty"`
-	PublicIPv4                  string            `toml:"public-ipv4" json:"publicIpv4,omitempty"`
-	PublicIPv6                  string            `toml:"public-ipv6" json:"publicIpv6,omitempty"`
+	Debug                       bool                       `toml:"debug" json:"debug,omitempty"`
+	AllowFallbackOnUnknownDC    bool                       `toml:"allow-fallback-on-unknown-dc" json:"allowFallbackOnUnknownDc,omitempty"`
+	Secret                      string                     `toml:"secret" json:"secret,omitempty"`
+	Secrets                     map[string]string          `toml:"secrets" json:"secrets,omitempty"`
+	SecretLimits                map[string]tomlSecretLimit `toml:"secret-limits" json:"secretLimits,omitempty"`
+	UsageStateFile              string                     `toml:"usage-state-file" json:"usageStateFile,omitempty"`
+	BindTo                      any                        `toml:"bind-to" json:"bindTo"`
+	ProxyProtocolListener       bool                       `toml:"proxy-protocol-listener" json:"proxyProtocolListener"`
+	PreferIP                    string                     `toml:"prefer-ip" json:"preferIp,omitempty"`
+	AutoUpdate                  bool                       `toml:"auto-update" json:"autoUpdate,omitempty"`
+	DomainFrontingPort          uint                       `toml:"domain-fronting-port" json:"domainFrontingPort,omitempty"`
+	DomainFrontingIP            string                     `toml:"domain-fronting-ip" json:"domainFrontingIp,omitempty"`
+	DomainFrontingProxyProtocol bool                       `toml:"domain-fronting-proxy-protocol" json:"domainFrontingProxyProtocol,omitempty"`
+	TolerateTimeSkewness        string                     `toml:"tolerate-time-skewness" json:"tolerateTimeSkewness,omitempty"`
+	Concurrency                 uint                       `toml:"concurrency" json:"concurrency,omitempty"`
+	PublicIPv4                  string                     `toml:"public-ipv4" json:"publicIpv4,omitempty"`
+	PublicIPv6                  string                     `toml:"public-ipv6" json:"publicIpv6,omitempty"`
 	DomainFronting              struct {
 		Host          string `toml:"host" json:"host,omitempty"`
 		IP            string `toml:"ip" json:"ip,omitempty"`
@@ -122,6 +126,62 @@ type tomlConfig struct {
 	} `toml:"stats" json:"stats,omitempty"`
 }
 
+// tomlSecretLimit is one [secret-limits.<name>] table. quota and expires may
+// be written as TOML values of several types; normalizeSecretLimits turns
+// them into strings.
+type tomlSecretLimit struct {
+	Quota      any    `toml:"quota" json:"quota,omitempty"`
+	QuotaReset string `toml:"quota-reset" json:"quotaReset,omitempty"`
+	Expires    any    `toml:"expires" json:"expires,omitempty"`
+	Disabled   bool   `toml:"disabled" json:"disabled,omitempty"`
+}
+
+// normalizeSecretLimits brings the values of [secret-limits] to strings and
+// checks them, so that an error names the user and the key.
+func normalizeSecretLimits(limits map[string]tomlSecretLimit) error {
+	for name, lim := range limits {
+		switch v := lim.Quota.(type) {
+		case nil, string:
+		case int64:
+			lim.Quota = strconv.FormatInt(v, 10)
+		default:
+			return fmt.Errorf("incorrect secret-limits.%s.quota: must be a size string or a number of bytes", name)
+		}
+
+		switch v := lim.Expires.(type) {
+		case nil, string:
+		case time.Time:
+			lim.Expires = v.Format(time.RFC3339Nano)
+		case toml.LocalDate:
+			lim.Expires = v.String()
+		default:
+			return fmt.Errorf("incorrect secret-limits.%s.expires: must be an RFC3339 time with an offset or a date", name)
+		}
+
+		if q, ok := lim.Quota.(string); ok {
+			if err := (&TypeQuota{}).Set(q); err != nil {
+				return fmt.Errorf("incorrect secret-limits.%s.quota: %w", name, err)
+			}
+		}
+
+		if lim.QuotaReset != "" {
+			if err := (&TypeQuotaReset{}).Set(lim.QuotaReset); err != nil {
+				return fmt.Errorf("incorrect secret-limits.%s.quota-reset: %w", name, err)
+			}
+		}
+
+		if e, ok := lim.Expires.(string); ok {
+			if err := (&TypeExpiry{}).Set(e); err != nil {
+				return fmt.Errorf("incorrect secret-limits.%s.expires: %w", name, err)
+			}
+		}
+
+		limits[name] = lim
+	}
+
+	return nil
+}
+
 func Parse(rawData []byte) (*Config, error) {
 	tomlConf := &tomlConfig{}
 	jsonBuf := &bytes.Buffer{}
@@ -153,6 +213,10 @@ func Parse(rawData []byte) (*Config, error) {
 		}
 
 		tomlConf.BindTo = strs
+	}
+
+	if err := normalizeSecretLimits(tomlConf.SecretLimits); err != nil {
+		return nil, err
 	}
 
 	if err := jsonEncoder.Encode(tomlConf); err != nil {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/dolonet/mtg-multi/internal/config"
+	"github.com/dolonet/mtg-multi/internal/utils"
 	"github.com/dolonet/mtg-multi/logger"
 	"github.com/dolonet/mtg-multi/mtglib"
 	"github.com/stretchr/testify/assert"
@@ -20,16 +22,21 @@ import (
 )
 
 type fakeSecretsUpdater struct {
-	mu    sync.Mutex
-	calls []map[string]mtglib.Secret
-	err   error
+	mu     sync.Mutex
+	calls  []map[string]mtglib.Secret
+	limits []map[string]mtglib.SecretLimits
+	err    error
 }
 
-func (f *fakeSecretsUpdater) UpdateSecrets(secrets map[string]mtglib.Secret) (mtglib.SecretsUpdate, error) {
+func (f *fakeSecretsUpdater) UpdateSecretsWithLimits(
+	secrets map[string]mtglib.Secret,
+	limits map[string]mtglib.SecretLimits,
+) (mtglib.SecretsUpdate, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	f.calls = append(f.calls, secrets)
+	f.limits = append(f.limits, limits)
 
 	return mtglib.SecretsUpdate{Added: len(secrets)}, f.err
 }
@@ -70,6 +77,71 @@ func TestReloadSecretsSingleSecret(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, map[string]mtglib.Secret{"default": secret}, updater.calls[0])
+}
+
+// A reload hands the [secret-limits] of the new config to the proxy together
+// with the secrets.
+func TestReloadSecretsAppliesLimits(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(path, fmt.Appendf(nil, `
+bind-to = "127.0.0.1:443"
+
+[secrets]
+alice = "%s"
+bob = "%s"
+
+[secret-limits.alice]
+disabled = true
+
+[secret-limits.bob]
+quota = "1GB"
+quota-reset = "daily"
+`, mtglib.GenerateSecret("example.com").Hex(), mtglib.GenerateSecret("example.com").Hex()), 0o600))
+
+	updater := &fakeSecretsUpdater{}
+
+	_, err := reloadSecrets(func() (*config.Config, error) {
+		return utils.ReadConfig(path)
+	}, updater, logger.NewNoopLogger())
+	require.NoError(t, err)
+
+	require.Len(t, updater.limits, 1)
+	assert.Equal(t, map[string]mtglib.SecretLimits{
+		"alice": {Disabled: true},
+		"bob":   {QuotaBytes: 1 << 30, QuotaReset: mtglib.QuotaResetDaily},
+	}, updater.limits[0])
+}
+
+// Broken limits fail the reload like a broken secret: the proxy is not
+// touched and keeps the current set.
+func TestReloadSecretsKeepsCurrentOnBrokenLimits(t *testing.T) {
+	t.Parallel()
+
+	for name, table := range map[string]string{
+		"unknown user": "[secret-limits.ghost]\ndisabled = true",
+		"zero quota":   "[secret-limits.alice]\nquota = 0",
+		"bad period":   "[secret-limits.alice]\nquota = \"1GB\"\nquota-reset = \"yearly\"",
+	} {
+		path := filepath.Join(t.TempDir(), "config.toml")
+		require.NoError(t, os.WriteFile(path, fmt.Appendf(nil, `
+bind-to = "127.0.0.1:443"
+
+[secrets]
+alice = "%s"
+
+%s
+`, mtglib.GenerateSecret("example.com").Hex(), table), 0o600))
+
+		updater := &fakeSecretsUpdater{}
+
+		_, err := reloadSecrets(func() (*config.Config, error) {
+			return utils.ReadConfig(path)
+		}, updater, logger.NewNoopLogger())
+		require.Error(t, err, name)
+		assert.Zero(t, updater.callCount(), name)
+	}
 }
 
 // A broken config (for example a half-written file) must not reach the proxy.

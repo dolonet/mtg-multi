@@ -25,6 +25,12 @@ secret = "ee367a189aee18fa31c190054efd4a8e9573746f726167652e676f6f676c6561706973
 # If not set, the stats API is not started.
 # api-bind-to = "127.0.0.1:9090"
 
+# A JSON file the per-secret quota usage (see [secret-limits] below) is saved
+# to every 30 seconds and on shutdown, and restored from on start. The file is
+# replaced atomically. Without it the quota usage starts from zero on every
+# start of mtg. Not needed if no secret has a quota.
+# usage-state-file = "/var/lib/mtg/usage.json"
+
 # Host:port pair(s) to run proxy on (required).
 # The host part must be a literal IP address; hostnames and "*" are rejected.
 #   - IPv4 only:
@@ -131,10 +137,42 @@ allow-fallback-on-unknown-dc = false
 # Secrets can be changed without a restart: edit this file (atomically,
 # via a temporary file and mv) and send SIGHUP to mtg. Sessions of removed
 # users and of users with a changed secret are closed; other users are not
-# affected. Other options are not reloaded.
+# affected. [secret-limits] is reloaded too. Other options are not reloaded.
 # [secrets]
 # alice = "ee367a189aee18fa31c190054efd4a8e9573746f726167652e676f6f676c65617069732e636f6d"
 # bob = "ee0123456789abcdef0123456789abcd9573746f726167652e676f6f676c65617069732e636f6d"
+
+# Optional per-user limits. Each [secret-limits.<name>] table refers to a user
+# from [secrets] ("default" for the single secret). A user without a table has
+# no limits. All keys are optional:
+#
+#   quota        traffic allowed per quota period, bytes from and to the client
+#                (the same bytes as bytes_in + bytes_out in /stats): a size like
+#                "10GB" or "500 MiB" (units are powers of 1024) or a number of
+#                bytes. Must be positive; leave it out for unlimited.
+#   quota-reset  when the used traffic starts from zero again: "none" (default,
+#                one allowance), "daily" (00:00 UTC), "weekly" (Monday 00:00
+#                UTC) or "monthly" (the 1st, 00:00 UTC). Needs a quota.
+#   expires      when the user stops working: an RFC3339 time with an offset
+#                ("2026-12-31T21:00:00Z") or a date ("2027-01-01", 00:00 UTC of
+#                that day).
+#   disabled     true rejects the user without removing it.
+#
+# A new connection of a disabled, expired or over-quota user gets exactly what
+# a wrong secret gets: the fronting domain. Live sessions are closed when a
+# reload disables the user, when the user expires, or within 30 seconds after
+# it goes over its quota. The limits are reloaded with [secrets] by SIGHUP; the
+# quota usage of a user survives a reload, a removed user starts from zero.
+# Set usage-state-file above to keep the usage across restarts.
+#
+# Like [secrets], these tables must come after all global keys.
+# [secret-limits.alice]
+# quota = "50GB"
+# quota-reset = "monthly"
+# expires = "2026-12-31T21:00:00Z"
+#
+# [secret-limits.bob]
+# disabled = true
 
 # This section is relevant to communication with fronting domain. Usually
 # you do not need to setup anything here but there are plenty of cases, especially

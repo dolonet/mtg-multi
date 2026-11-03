@@ -16,7 +16,7 @@ alice = "ee367a189aee18fa31c190054efd4a8e9573746f726167652e676f6f676c65617069732
 bob   = "ee0123456789abcdef0123456789abcd9573746f726167652e676f6f676c65617069732e636f6d"
 ```
 
-**Reload users without a restart.** Send `SIGHUP` and mtg re-reads the config file and applies the `[secrets]` section (or `secret`) on the fly. New users can connect right away; live sessions of unchanged users are kept; sessions of removed users and of users whose secret has changed are closed. If the file cannot be read or is invalid, the current secrets are kept and a warning is logged. Other options are not reloaded: they still need a restart. Not available on Windows.
+**Reload users without a restart.** Send `SIGHUP` and mtg re-reads the config file and applies the `[secrets]` section (or `secret`) and `[secret-limits]` on the fly. New users can connect right away; live sessions of unchanged users are kept; sessions of removed users and of users whose secret has changed are closed. If the file cannot be read or is invalid, the current secrets are kept and a warning is logged. Other options are not reloaded: they still need a restart. Not available on Windows.
 
 ```console
 kill -HUP $(pidof mtg-multi)
@@ -81,6 +81,47 @@ Throttle state is exposed via the Stats API:
   }
 }
 ```
+
+**Per-user limits.** Optional limits per user: a traffic quota with an optional reset period, an expiry time and a disable switch. Useful to cap a shared link and to stop a user whose time is over even if the config sync is late. A user without a `[secret-limits.<name>]` table has no limits, so nothing changes until you add one.
+
+```toml
+usage-state-file = "/var/lib/mtg/usage.json"   # optional, keeps quota usage across restarts
+
+[secrets]
+alice = "ee..."
+bob   = "ee..."
+
+[secret-limits.alice]
+quota = "50GB"                    # bytes from and to the client; or a number of bytes
+quota-reset = "monthly"           # none (default), daily, weekly, monthly; UTC calendar
+expires = "2026-12-31T21:00:00Z"  # RFC3339 with an offset, or a date (00:00 UTC)
+
+[secret-limits.bob]
+disabled = true
+```
+
+- A new connection of a disabled, expired or over-quota user gets exactly what a wrong secret gets: the fronting domain, for FakeTLS, secured and WEB clients alike. Nothing new to fingerprint.
+- Live sessions are closed when a reload disables the user, when the user expires, and within 30 seconds after it goes over its quota (the check runs every 30 seconds, so a quota can be overrun by about 30 seconds of traffic).
+- The quota counts the same bytes as `bytes_in` + `bytes_out`; no extra work on the relay path. Daily periods start at 00:00 UTC, weekly on Monday, monthly on the 1st.
+- `SIGHUP` reloads `[secret-limits]` together with `[secrets]`. A user that stays keeps its quota usage, also when its quota or period changes (the usage then starts from zero at the next boundary of the new period). A quota that is added starts from zero; a removed quota or a removed user forgets its usage. An invalid table (unknown user, zero or negative quota, unknown period, a time without an offset) fails the reload, and the current secrets and limits stay.
+- Without `usage-state-file` the quota usage starts from zero on every start of mtg. With it, the usage is saved every 30 seconds and on shutdown (atomically) and restored on start.
+
+`/stats` shows the limits of every user next to the existing fields:
+
+```json
+"alice": {
+  "connections": 2, "bytes_in": 1048576, "bytes_out": 2097152, "last_seen": "2026-11-03T11:25:30Z", "active_ips": ["198.51.100.4"],
+  "state": "ok",
+  "enabled": true,
+  "quota_bytes": 53687091200,
+  "quota_used": 3145728,
+  "quota_reset": "monthly",
+  "quota_resets_at": "2026-12-01T00:00:00Z",
+  "expires_at": "2026-12-31T21:00:00Z"
+}
+```
+
+`state` is `ok`, `disabled`, `expired` or `over_quota` and `enabled` is false for a disabled user; both are always there. The quota fields are there only with a quota (`quota_resets_at` only with a reset period), `expires_at` only with an expiry time.
 
 **Public IP override.** Useful when auto-detection via ifconfig.co is unavailable.
 
@@ -232,7 +273,7 @@ alice = "ee367a189aee18fa31c190054efd4a8e9573746f726167652e676f6f676c65617069732
 bob   = "ee0123456789abcdef0123456789abcd9573746f726167652e676f6f676c65617069732e636f6d"
 ```
 
-**Смена пользователей без рестарта.** По `SIGHUP` mtg перечитывает файл конфига и применяет раздел `[secrets]` (или `secret`) на лету. Новые пользователи подключаются сразу; живые сессии неизменённых пользователей сохраняются; сессии удалённых пользователей и тех, у кого сменился секрет, закрываются. Если файл не читается или неверен, текущие секреты остаются, в лог пишется предупреждение. Остальные настройки так не перечитываются - для них по-прежнему нужен рестарт. На Windows недоступно.
+**Смена пользователей без рестарта.** По `SIGHUP` mtg перечитывает файл конфига и применяет раздел `[secrets]` (или `secret`) и `[secret-limits]` на лету. Новые пользователи подключаются сразу; живые сессии неизменённых пользователей сохраняются; сессии удалённых пользователей и тех, у кого сменился секрет, закрываются. Если файл не читается или неверен, текущие секреты остаются, в лог пишется предупреждение. Остальные настройки так не перечитываются - для них по-прежнему нужен рестарт. На Windows недоступно.
 
 ```console
 kill -HUP $(pidof mtg-multi)
@@ -297,6 +338,47 @@ A и B остаются на 1. Оставшийся бюджет 98 делит�
   }
 }
 ```
+
+**Лимиты пользователей.** Необязательные лимиты на пользователя: квота трафика с периодом сброса, срок действия и выключатель. Помогают ограничить расшаренную ссылку и отключить пользователя с истёкшим сроком, даже если синхронизация конфига опаздывает. У пользователя без таблицы `[secret-limits.<name>]` лимитов нет, так что, пока её не добавить, ничего не меняется.
+
+```toml
+usage-state-file = "/var/lib/mtg/usage.json"   # необязательно, хранит расход квоты между рестартами
+
+[secrets]
+alice = "ee..."
+bob   = "ee..."
+
+[secret-limits.alice]
+quota = "50GB"                    # байты от клиента и к клиенту; или число байт
+quota-reset = "monthly"           # none (по умолчанию), daily, weekly, monthly; календарь UTC
+expires = "2026-12-31T21:00:00Z"  # RFC3339 со смещением или дата (00:00 UTC)
+
+[secret-limits.bob]
+disabled = true
+```
+
+- Новое подключение выключенного, истёкшего или исчерпавшего квоту пользователя получает ровно то же, что неверный секрет: fronting-домен, одинаково для FakeTLS, secured и WEB. Нового поведения, по которому можно опознать прокси, нет.
+- Живые сессии закрываются, когда перечитанный конфиг выключает пользователя, когда истекает срок, и в течение 30 секунд после исчерпания квоты (проверка идёт раз в 30 секунд, так что квоту можно превысить примерно на 30 секунд трафика).
+- Квота считает те же байты, что `bytes_in` + `bytes_out`; на пути релея лишней работы нет. Сутки начинаются в 00:00 UTC, неделя - в понедельник, месяц - 1-го числа.
+- `SIGHUP` перечитывает `[secret-limits]` вместе с `[secrets]`. У оставшегося пользователя расход квоты сохраняется, в том числе при смене размера квоты или периода (тогда расход обнуляется на ближайшей границе нового периода). Добавленная квота начинается с нуля; снятая квота и удалённый пользователь свой расход забывают. Неверная таблица (неизвестный пользователь, нулевая или отрицательная квота, неизвестный период, время без смещения) проваливает перечитывание, текущие секреты и лимиты остаются.
+- Без `usage-state-file` расход квоты обнуляется при каждом запуске mtg. С ним расход сохраняется раз в 30 секунд и при остановке (атомарно) и восстанавливается при запуске.
+
+`/stats` показывает лимиты каждого пользователя рядом с прежними полями:
+
+```json
+"alice": {
+  "connections": 2, "bytes_in": 1048576, "bytes_out": 2097152, "last_seen": "2026-11-03T11:25:30Z", "active_ips": ["198.51.100.4"],
+  "state": "ok",
+  "enabled": true,
+  "quota_bytes": 53687091200,
+  "quota_used": 3145728,
+  "quota_reset": "monthly",
+  "quota_resets_at": "2026-12-01T00:00:00Z",
+  "expires_at": "2026-12-31T21:00:00Z"
+}
+```
+
+`state` - `ok`, `disabled`, `expired` или `over_quota`, `enabled` равно false у выключенного пользователя; оба поля есть всегда. Поля квоты есть только при заданной квоте (`quota_resets_at` - только с периодом сброса), `expires_at` - только при заданном сроке.
 
 **Ручное указание публичного IP.** Для случаев, когда ifconfig.co недоступен с сервера.
 

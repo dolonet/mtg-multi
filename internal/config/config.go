@@ -7,12 +7,22 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/dolonet/mtg-multi/mtglib"
 )
 
 type Optional struct {
 	Enabled TypeBool `json:"enabled"`
+}
+
+// SecretLimit is one [secret-limits.<name>] table: optional limits of the
+// secret <name>. The zero value imposes no limits.
+type SecretLimit struct {
+	Quota      TypeQuota      `json:"quota"`
+	QuotaReset TypeQuotaReset `json:"quotaReset"`
+	Expires    TypeExpiry     `json:"expires"`
+	Disabled   TypeBool       `json:"disabled"`
 }
 
 type ListConfig struct {
@@ -28,6 +38,8 @@ type Config struct {
 	AllowFallbackOnUnknownDC    TypeBool                 `json:"allowFallbackOnUnknownDc"`
 	Secret                      mtglib.Secret            `json:"secret"`
 	Secrets                     map[string]mtglib.Secret `json:"secrets"`
+	SecretLimits                map[string]SecretLimit   `json:"secretLimits"`
+	UsageStateFile              string                   `json:"usageStateFile"`
 	BindTo                      []TypeHostPort           `json:"bindTo"`
 	ProxyProtocolListener       TypeBool                 `json:"proxyProtocolListener"`
 	PreferIP                    TypePreferIP             `json:"preferIp"`
@@ -206,7 +218,30 @@ func (c *Config) Validate() error {
 		return err
 	}
 
+	if err := c.validateSecretLimits(); err != nil {
+		return err
+	}
+
 	return c.validateWeb()
+}
+
+// validateSecretLimits checks that every [secret-limits] table names a
+// configured secret ("default" for the single secret) and has consistent
+// values. The values themselves are checked when the config is parsed.
+func (c *Config) validateSecretLimits() error {
+	secrets := c.GetSecrets()
+
+	for name, lim := range c.SecretLimits {
+		if _, ok := secrets[name]; !ok {
+			return fmt.Errorf("secret-limits.%s: unknown secret %q", name, name)
+		}
+
+		if lim.QuotaReset.Value != mtglib.QuotaResetNone && lim.Quota.Value == 0 {
+			return fmt.Errorf("secret-limits.%s: quota-reset needs a quota", name)
+		}
+	}
+
+	return nil
 }
 
 // validateWeb checks the [web] section. An empty bind-to disables the WEB
@@ -315,6 +350,27 @@ func (c *Config) GetSecrets() map[string]mtglib.Secret {
 	}
 
 	return map[string]mtglib.Secret{"default": c.Secret}
+}
+
+// GetSecretLimits returns the [secret-limits] tables as mtglib limits, or nil
+// when there are none.
+func (c *Config) GetSecretLimits() map[string]mtglib.SecretLimits {
+	if len(c.SecretLimits) == 0 {
+		return nil
+	}
+
+	out := make(map[string]mtglib.SecretLimits, len(c.SecretLimits))
+
+	for name, lim := range c.SecretLimits {
+		out[name] = mtglib.SecretLimits{
+			QuotaBytes: lim.Quota.Get(0),
+			QuotaReset: lim.QuotaReset.Get(mtglib.QuotaResetNone),
+			ExpiresAt:  lim.Expires.Get(time.Time{}),
+			Disabled:   lim.Disabled.Get(false),
+		}
+	}
+
+	return out
 }
 
 // GetBindAddrs returns all bind addresses as strings.

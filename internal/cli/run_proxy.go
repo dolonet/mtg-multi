@@ -324,6 +324,8 @@ func runProxy(
 		EventStream:     eventStream,
 
 		Secrets:                     conf.GetSecrets(),
+		SecretLimits:                conf.GetSecretLimits(),
+		UsageStateFile:              strings.TrimSpace(conf.UsageStateFile),
 		Concurrency:                 conf.GetConcurrency(mtglib.DefaultConcurrency),
 		DomainFrontingPort:          conf.GetDomainFrontingPort(mtglib.DefaultDomainFrontingPort),
 		DomainFrontingHost:          conf.GetDomainFrontingHost(),

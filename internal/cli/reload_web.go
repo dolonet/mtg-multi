@@ -24,13 +24,16 @@ type reloadWithWeb struct {
 	logger mtglib.Logger
 }
 
-func (r reloadWithWeb) UpdateSecrets(secrets map[string]mtglib.Secret) (mtglib.SecretsUpdate, error) {
+func (r reloadWithWeb) UpdateSecretsWithLimits(
+	secrets map[string]mtglib.Secret,
+	limits map[string]mtglib.SecretLimits,
+) (mtglib.SecretsUpdate, error) {
 	prepared, err := r.web.PrepareSecrets(webSecrets(secrets))
 	if err != nil {
 		return mtglib.SecretsUpdate{}, fmt.Errorf("web: %w", err)
 	}
 
-	update, err := r.proxy.UpdateSecrets(secrets)
+	update, err := r.proxy.UpdateSecretsWithLimits(secrets, limits)
 	if err != nil {
 		return update, err
 	}

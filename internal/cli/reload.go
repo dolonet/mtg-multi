@@ -18,7 +18,10 @@ import (
 const reloadHostCheckTimeout = 5 * time.Second
 
 type secretsUpdater interface {
-	UpdateSecrets(secrets map[string]mtglib.Secret) (mtglib.SecretsUpdate, error)
+	UpdateSecretsWithLimits(
+		secrets map[string]mtglib.Secret,
+		limits map[string]mtglib.SecretLimits,
+	) (mtglib.SecretsUpdate, error)
 }
 
 // hostResolver is the part of *net.Resolver used to check new hostnames. It
@@ -27,8 +30,8 @@ type hostResolver interface {
 	LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error)
 }
 
-// reloadSecrets re-reads the configuration and applies its secrets to a
-// running proxy. Other options are not reloaded. On any error the current
+// reloadSecrets re-reads the configuration and applies its secrets and their
+// [secret-limits] to a running proxy. Other options are not reloaded. On any error the current
 // secrets are kept. It returns the secrets that have been applied.
 func reloadSecrets(
 	readConfig func() (*config.Config, error),
@@ -44,7 +47,7 @@ func reloadSecrets(
 
 	secrets := conf.GetSecrets()
 
-	update, err := proxy.UpdateSecrets(secrets)
+	update, err := proxy.UpdateSecretsWithLimits(secrets, conf.GetSecretLimits())
 	if err != nil {
 		logger.WarningError("reload: cannot apply secrets, keeping current secrets", err)
 
@@ -56,6 +59,7 @@ func reloadSecrets(
 		BindInt("removed", update.Removed).
 		BindInt("changed", update.Changed).
 		BindInt("closed_sessions", update.ClosedSessions).
+		BindInt("limited_sessions", update.LimitedSessions).
 		// Warning, not Info: by default mtg logs warnings only, and an
 		// operator needs to see the result of every reload.
 		Warning("reload: secrets have been updated")
