@@ -67,7 +67,7 @@ func (n *network) NativeDialer() *net.Dialer {
 	return &n.Dialer
 }
 
-// New creates a network with the default TCP_NOTSENT_LOWAT setting.
+// New preserves the constructor signature of released mtg-multi versions.
 func New(
 	dnsResolver *net.Resolver,
 	userAgent string,
@@ -75,9 +75,10 @@ func New(
 	httpTimeout,
 	idleTimeout time.Duration,
 	keepAliveConfig net.KeepAliveConfig,
+	tcpNotSentLowat int,
 ) mtglib.Network {
 	return NewWithTCPNotSentLowat(dnsResolver, userAgent, tcpTimeout, httpTimeout,
-		idleTimeout, keepAliveConfig, DefaultTCPNotSentLowat)
+		idleTimeout, keepAliveConfig, tcpNotSentLowat)
 }
 
 // NewWithTCPNotSentLowat creates a network with an explicit TCP_NOTSENT_LOWAT

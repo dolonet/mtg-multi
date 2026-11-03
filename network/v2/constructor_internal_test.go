@@ -10,14 +10,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// New keeps the exact v2.2.8 function type, including assignments by callers.
+// New keeps the exact v1.14.0 function type, including assignments by callers.
 var _ func(*net.Resolver, string, time.Duration, time.Duration, time.Duration,
-	net.KeepAliveConfig) mtglib.Network = New
+	net.KeepAliveConfig, int) mtglib.Network = New
 
 func TestConstructorCompatibility(t *testing.T) {
 	t.Parallel()
 
-	legacy, ok := New(nil, "", 0, 0, 0, DefaultKeepAliveConfig).(*network)
+	legacy, ok := New(nil, "", 0, 0, 0, DefaultKeepAliveConfig, 0).(*network)
 	require.True(t, ok)
 	require.Equal(t, DefaultTCPNotSentLowat, legacy.tcpNotSentLowat)
 
@@ -31,6 +31,10 @@ func TestConstructorCompatibility(t *testing.T) {
 				want = DefaultTCPNotSentLowat
 			}
 			require.Equal(t, want, current.tcpNotSentLowat)
+
+			legacy, ok := New(nil, "", 0, 0, 0, DefaultKeepAliveConfig, value).(*network)
+			require.True(t, ok)
+			require.Equal(t, want, legacy.tcpNotSentLowat)
 		})
 	}
 }
