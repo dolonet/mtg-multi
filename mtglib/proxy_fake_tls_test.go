@@ -228,8 +228,12 @@ func (p *fakeTLSProxy) handshake(t *testing.T, hello []byte) fakeTLSOutcome {
 }
 
 func withExactAntiReplay(opts *mtglib.ProxyOpts) {
-	opts.FakeTLSAntiReplayCache = antireplay.NewExact(
-		antireplay.TTLForTimeSkewness(opts.TolerateTimeSkewness), 0)
+	window := opts.TolerateTimeSkewness
+	if window == 0 {
+		window = mtglib.DefaultTolerateTimeSkewnessExact
+	}
+
+	opts.FakeTLSAntiReplayCache = antireplay.NewExact(antireplay.TTLForTimeSkewness(window), 0)
 }
 
 // A replayed ClientHello goes to the fronting host, fresh ones are served.
@@ -275,4 +279,119 @@ func TestFakeTLSAntiReplayTTLTooShort(t *testing.T) {
 		TolerateTimeSkewness:   10 * time.Second,
 	})
 	require.ErrorIs(t, err, mtglib.ErrAntiReplayTTLTooShort)
+}
+
+// With an exact FakeTLS cache the default window is 2 minutes, and a replay
+// anywhere in it is still caught.
+func TestFakeTLSDefaultWindowWithExactCache(t *testing.T) {
+	t.Parallel()
+
+	proxy := startFakeTLSProxy(t, func(opts *mtglib.ProxyOpts) {
+		opts.FakeTLSAntiReplayCache = antireplay.NewExact(
+			antireplay.TTLForTimeSkewness(mtglib.DefaultTolerateTimeSkewnessExact), 0)
+	})
+
+	now := unixNow()
+
+	for i, offset := range []int64{-110, -30, 0, 30, 110} {
+		hello := fakeTLSClientHello(t, uint32(int64(now)+offset), uint64(i)) //nolint: gosec
+
+		assert.True(t, proxy.handshake(t, hello).served, "offset %d", offset)
+		assert.False(t, proxy.handshake(t, hello).served, "replay at offset %d", offset)
+	}
+
+	assert.False(t, proxy.handshake(t, fakeTLSClientHello(t, now-130, 10)).served)
+	assert.False(t, proxy.handshake(t, fakeTLSClientHello(t, now+130, 11)).served)
+}
+
+// Without the exact cache the default window stays at 3 seconds.
+func TestFakeTLSDefaultWindowWithoutExactCache(t *testing.T) {
+	t.Parallel()
+
+	proxy := startFakeTLSProxy(t, nil)
+	now := unixNow()
+
+	assert.True(t, proxy.handshake(t, fakeTLSClientHello(t, now, 1)).served)
+	assert.False(t, proxy.handshake(t, fakeTLSClientHello(t, now-30, 2)).served)
+}
+
+func TestFakeTLSBootTimeTimestamps(t *testing.T) {
+	t.Parallel()
+
+	proxy := startFakeTLSProxy(t, func(opts *mtglib.ProxyOpts) {
+		opts.BootTimeTimestampsBelow = mtglib.BootTimeTimestampsMax
+		withExactAntiReplay(opts)
+	})
+
+	uptime := fakeTLSClientHello(t, 3*24*60*60, 1)
+
+	assert.True(t, proxy.handshake(t, uptime).served)
+	assert.False(t, proxy.handshake(t, uptime).served, "replay")
+	assert.True(t, proxy.handshake(t, fakeTLSClientHello(t, unixNow(), 2)).served)
+	assert.False(t, proxy.handshake(t, fakeTLSClientHello(t, 7*24*60*60, 3)).served, "7 days is not boot time")
+
+	disabled := startFakeTLSProxy(t, withExactAntiReplay)
+
+	assert.False(t, disabled.handshake(t, fakeTLSClientHello(t, 1000, 4)).served)
+}
+
+func TestFakeTLSBootTimeTimestampsLimit(t *testing.T) {
+	t.Parallel()
+
+	dialer, err := network.NewDefaultDialer(0, 0)
+	require.NoError(t, err)
+
+	ntw, err := network.NewNetwork(dialer, "mtgtest", "1.1.1.1", 0)
+	require.NoError(t, err)
+
+	_, err = mtglib.NewProxy(mtglib.ProxyOpts{
+		Secret:                  mtglib.GenerateSecret("example.com"),
+		Network:                 ntw,
+		AntiReplayCache:         antireplay.NewNoop(),
+		IPBlocklist:             ipblocklist.NewNoop(),
+		IPAllowlist:             ipblocklist.NewNoop(),
+		EventStream:             events.NewNoopStream(),
+		Logger:                  logger.NewNoopLogger(),
+		BootTimeTimestampsBelow: mtglib.BootTimeTimestampsMax + time.Second,
+	})
+	require.ErrorIs(t, err, mtglib.ErrBootTimeTimestampsBelowTooLarge)
+}
+
+// Whenever two moments both accept the same timestamp, they are less than
+// FakeTLSReplayTTL apart: a replay that passes the timestamp check always
+// finds the first ClientHello still in the cache.
+func TestFakeTLSReplayTTLCoversWindow(t *testing.T) {
+	t.Parallel()
+
+	timestamp := time.Unix(1_800_000_000, 0)
+
+	// covers sweeps the first sight and the replay over the window and a
+	// little around it, with sub-second offsets, and reports whether every
+	// replay that passes the timestamp check comes within ttl.
+	covers := func(window, ttl time.Duration) bool {
+		step := window / 50
+
+		accepted := func(at time.Time) bool {
+			return at.Sub(timestamp).Abs() <= window
+		}
+
+		for first := -window - time.Second; first <= window+time.Second; first += step {
+			for replay := first; replay <= window+time.Second; replay += step / 3 {
+				seen, replayed := timestamp.Add(first), timestamp.Add(replay)
+
+				if accepted(seen) && accepted(replayed) && replayed.Sub(seen) >= ttl {
+					return false
+				}
+			}
+		}
+
+		return true
+	}
+
+	for _, window := range []time.Duration{time.Second, 3 * time.Second, 2 * time.Minute} {
+		assert.True(t, covers(window, mtglib.FakeTLSReplayTTL(window)), "window %v", window)
+		// A TTL of the window alone is not enough: a client clock ahead by
+		// the whole window makes its ClientHello replayable for 2*window.
+		assert.False(t, covers(window, window), "window %v", window)
+	}
 }

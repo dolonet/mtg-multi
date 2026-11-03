@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/dolonet/mtg-multi/mtglib"
 )
@@ -36,6 +37,7 @@ type Config struct {
 	DomainFrontingIP            TypeIP                   `json:"domainFrontingIp"`
 	DomainFrontingProxyProtocol TypeBool                 `json:"domainFrontingProxyProtocol"`
 	TolerateTimeSkewness        TypeDuration             `json:"tolerateTimeSkewness"`
+	BootTimeTimestampsBelow     TypeDuration             `json:"bootTimeTimestampsBelow"`
 	Concurrency                 TypeConcurrency          `json:"concurrency"`
 	PublicIPv4                  TypeIP                   `json:"publicIpv4"`
 	PublicIPv6                  TypeIP                   `json:"publicIpv6"`
@@ -209,6 +211,11 @@ func (c *Config) Validate() error {
 		return err
 	}
 
+	if v := c.BootTimeTimestampsBelow.Get(0); v > mtglib.BootTimeTimestampsMax {
+		return fmt.Errorf("boot-time-timestamps-below must be at most %v, got %v",
+			mtglib.BootTimeTimestampsMax, v)
+	}
+
 	switch c.GetAntiReplayMode() {
 	case AntiReplayModeExact, AntiReplayModeBloom:
 	default:
@@ -229,6 +236,18 @@ const (
 	// before the exact cache was added.
 	AntiReplayModeBloom = "bloom"
 )
+
+// GetTolerateTimeSkewness returns tolerate-time-skewness. If it is not set,
+// it is mtglib.DefaultTolerateTimeSkewnessExact when FakeTLS ClientHellos go
+// to the exact anti-replay cache, which covers the whole window, and the
+// short mtglib.DefaultTolerateTimeSkewness otherwise.
+func (c *Config) GetTolerateTimeSkewness() time.Duration {
+	if c.Defense.AntiReplay.Enabled.Get(false) && c.GetAntiReplayMode() == AntiReplayModeExact {
+		return c.TolerateTimeSkewness.Get(mtglib.DefaultTolerateTimeSkewnessExact)
+	}
+
+	return c.TolerateTimeSkewness.Get(mtglib.DefaultTolerateTimeSkewness)
+}
 
 // GetAntiReplayMode returns the normalized defense.anti-replay.mode,
 // AntiReplayModeExact if it is not set.

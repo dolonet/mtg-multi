@@ -103,10 +103,27 @@ auto-update = false
 # we need to proceed with connection or not.
 #
 # Sometimes time can be skewed so we accept all messages within a
-# time range of this parameter.
+# time range of this parameter. The timestamp comes from the client clock,
+# and phones are often seconds to minutes off; a client outside the range
+# is sent to the fronting host, so for its user the proxy just does not work.
 #
-# Default value is 3s
-tolerate-time-skewness = "5s"
+# Default value is 2m when anti-replay is enabled in the "exact" mode
+# ([defense.anti-replay]): that cache remembers every ClientHello for the
+# whole range, so a wide range does not let replays through. Otherwise the
+# default is 3s, since then only the timestamp limits replays.
+# tolerate-time-skewness = "2m"
+
+# Some clients send their uptime instead of the Unix time as the FakeTLS
+# timestamp. A positive value accepts every timestamp below it, whatever the
+# current time, as a time since boot; it is at most 168h (7 days, no real
+# Unix time is that small). Such a timestamp never expires, so a captured
+# ClientHello with it can be replayed once the anti-replay cache has
+# forgotten it (2 * tolerate-time-skewness + 1s later, or after a restart).
+# telemt, which has the same rule, caps it at the smaller of 2 minutes and
+# its replay window for this reason.
+#
+# Default value is 0 (disabled).
+# boot-time-timestamps-below = "2m"
 
 # Telegram has a concept of DC. You can think about DC as a number of a cluster
 # with a certain purpose. Some clusters serve media, some - messages, some rule

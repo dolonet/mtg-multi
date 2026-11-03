@@ -104,8 +104,23 @@ type ProxyOpts struct {
 	// This means that if if you got a timestamp X, now is Y, then if |X-Y| <
 	// TolerateTimeSkewness, then you accept a packet.
 	//
+	// The default is DefaultTolerateTimeSkewnessExact if
+	// FakeTLSAntiReplayCache is set and DefaultTolerateTimeSkewness otherwise.
+	//
 	// This is an optional setting.
 	TolerateTimeSkewness time.Duration
+
+	// BootTimeTimestampsBelow > 0 also accepts FakeTLS timestamps below this
+	// value whatever the current time: some clients send their uptime
+	// instead of the Unix time. It is at most BootTimeTimestampsMax.
+	//
+	// Such a timestamp never expires, so a captured ClientHello with it can
+	// be replayed once the anti-replay cache has forgotten it, that is after
+	// FakeTLSReplayTTL or a restart. Enable it only if such clients are
+	// expected.
+	//
+	// This is an optional setting, disabled by default.
+	BootTimeTimestampsBelow time.Duration
 
 	// PreferIP defines an IP connectivity preference. Valid values are:
 	// 'prefer-ipv4', 'prefer-ipv6', 'only-ipv4', 'only-ipv6'.
@@ -340,6 +355,11 @@ func (p ProxyOpts) valid() error {
 		return err
 	}
 
+	if p.BootTimeTimestampsBelow > BootTimeTimestampsMax {
+		return fmt.Errorf("%w: %v, the limit is %v",
+			ErrBootTimeTimestampsBelowTooLarge, p.BootTimeTimestampsBelow, BootTimeTimestampsMax)
+	}
+
 	if cache, ok := p.FakeTLSAntiReplayCache.(interface{ ReplayTTL() time.Duration }); ok {
 		if needed := FakeTLSReplayTTL(p.getTolerateTimeSkewness()); cache.ReplayTTL() < needed {
 			return fmt.Errorf("%w: %v, needs at least %v",
@@ -449,6 +469,10 @@ func (p ProxyOpts) getFakeTLSAntiReplayCache() AntiReplayCache {
 
 func (p ProxyOpts) getTolerateTimeSkewness() time.Duration {
 	if p.TolerateTimeSkewness == 0 {
+		if p.FakeTLSAntiReplayCache != nil {
+			return DefaultTolerateTimeSkewnessExact
+		}
+
 		return DefaultTolerateTimeSkewness
 	}
 

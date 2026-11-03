@@ -21,6 +21,7 @@ type tomlConfig struct {
 	DomainFrontingIP            string            `toml:"domain-fronting-ip" json:"domainFrontingIp,omitempty"`
 	DomainFrontingProxyProtocol bool              `toml:"domain-fronting-proxy-protocol" json:"domainFrontingProxyProtocol,omitempty"`
 	TolerateTimeSkewness        string            `toml:"tolerate-time-skewness" json:"tolerateTimeSkewness,omitempty"`
+	BootTimeTimestampsBelow     string            `toml:"boot-time-timestamps-below" json:"bootTimeTimestampsBelow,omitempty"`
 	Concurrency                 uint              `toml:"concurrency" json:"concurrency,omitempty"`
 	PublicIPv4                  string            `toml:"public-ipv4" json:"publicIpv4,omitempty"`
 	PublicIPv6                  string            `toml:"public-ipv6" json:"publicIpv6,omitempty"`

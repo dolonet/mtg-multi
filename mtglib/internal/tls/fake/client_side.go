@@ -48,6 +48,39 @@ type ReadClientHelloResult struct {
 	Hello        *ClientHello
 	MatchedIndex int
 	MatchedHost  string
+	// BootTime is true if the timestamp was accepted by the boot-time rule
+	// (TimestampPolicy.BootTimeBelow), not by the skewness check.
+	BootTime bool
+}
+
+// TimestampPolicy defines which ClientHello timestamps are accepted.
+type TimestampPolicy struct {
+	// TolerateTimeSkewness accepts a timestamp T while |now - T| is at most
+	// this value.
+	TolerateTimeSkewness time.Duration
+
+	// BootTimeBelow > 0 also accepts every timestamp below this value as a
+	// time since boot, whatever the current time. Some clients send their
+	// uptime instead of the Unix time. 0 disables the rule.
+	BootTimeBelow time.Duration
+
+	// Now returns the current time; nil means time.Now.
+	Now func() time.Time
+}
+
+func (t TimestampPolicy) accepts(timestamp uint32) (accepted, bootTime bool) {
+	if t.BootTimeBelow > 0 && time.Duration(timestamp)*time.Second < t.BootTimeBelow {
+		return true, true
+	}
+
+	now := time.Now
+	if t.Now != nil {
+		now = t.Now
+	}
+
+	tdiff := now().Sub(time.Unix(int64(timestamp), 0)).Abs()
+
+	return tdiff <= t.TolerateTimeSkewness, false
 }
 
 func ReadClientHello(
@@ -73,6 +106,19 @@ func ReadClientHelloMulti(
 	secrets [][]byte,
 	hostnames []string,
 	tolerateTimeSkewness time.Duration,
+) (*ReadClientHelloResult, error) {
+	return ReadClientHelloWithPolicy(conn, secrets, hostnames, TimestampPolicy{
+		TolerateTimeSkewness: tolerateTimeSkewness,
+	})
+}
+
+// ReadClientHelloWithPolicy is like ReadClientHelloMulti, with the accepted
+// timestamps defined by policy.
+func ReadClientHelloWithPolicy(
+	conn net.Conn,
+	secrets [][]byte,
+	hostnames []string,
+	policy TimestampPolicy,
 ) (*ReadClientHelloResult, error) {
 	clientHelloCopy, handshakeReader, err := parseClientHello(conn)
 	if err != nil {
@@ -124,10 +170,8 @@ func ReadClientHelloMulti(
 			continue
 		}
 
-		timestamp := int64(binary.LittleEndian.Uint32(computed[RandomLen-4:]))
-		createdAt := time.Unix(timestamp, 0)
-
-		if tdiff := time.Since(createdAt).Abs(); tdiff > tolerateTimeSkewness {
+		accepted, bootTime := policy.accepts(binary.LittleEndian.Uint32(computed[RandomLen-4:]))
+		if !accepted {
 			continue
 		}
 
@@ -135,6 +179,7 @@ func ReadClientHelloMulti(
 			Hello:        hello,
 			MatchedIndex: idx,
 			MatchedHost:  matchedHost,
+			BootTime:     bootTime,
 		}, nil
 	}
 

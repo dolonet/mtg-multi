@@ -210,6 +210,39 @@ func (suite *ConfigTestSuite) TestAntiReplayBadMode() {
 	suite.ErrorContains(conf.Validate(), "anti-replay.mode")
 }
 
+func (suite *ConfigTestSuite) TestTolerateTimeSkewnessDefault() {
+	// Anti-replay is disabled: only the timestamp limits replays.
+	conf, err := config.Parse(suite.ReadConfig("minimal.toml"))
+	suite.NoError(err)
+	suite.Equal(mtglib.DefaultTolerateTimeSkewness, conf.GetTolerateTimeSkewness())
+
+	conf, err = config.Parse(suite.ReadConfig("anti_replay_exact.toml"))
+	suite.NoError(err)
+	suite.Equal(mtglib.DefaultTolerateTimeSkewnessExact, conf.GetTolerateTimeSkewness())
+
+	conf, err = config.Parse(suite.ReadConfig("anti_replay_bloom.toml"))
+	suite.NoError(err)
+	suite.Equal(mtglib.DefaultTolerateTimeSkewness, conf.GetTolerateTimeSkewness())
+
+	suite.NoError(conf.TolerateTimeSkewness.Set("30s"))
+	suite.Equal(30*time.Second, conf.GetTolerateTimeSkewness())
+}
+
+func (suite *ConfigTestSuite) TestBootTimeTimestamps() {
+	conf, err := config.Parse(suite.ReadConfig("minimal.toml"))
+	suite.NoError(err)
+	suite.EqualValues(0, conf.BootTimeTimestampsBelow.Get(0))
+
+	conf, err = config.Parse(suite.ReadConfig("boot_time.toml"))
+	suite.NoError(err)
+	suite.NoError(conf.Validate())
+	suite.Equal(2*time.Minute, conf.BootTimeTimestampsBelow.Get(0))
+
+	conf, err = config.Parse(suite.ReadConfig("boot_time_too_large.toml"))
+	suite.NoError(err)
+	suite.ErrorContains(conf.Validate(), "boot-time-timestamps-below")
+}
+
 func (suite *ConfigTestSuite) TestSecuredDisabledByDefault() {
 	conf, err := config.Parse(suite.ReadConfig("minimal.toml"))
 	suite.NoError(err)

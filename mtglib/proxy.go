@@ -43,6 +43,7 @@ type Proxy struct {
 	pendingHandshakesLog        *logthrottle.Throttle
 	dcPool                      *dcPool
 	tolerateTimeSkewness        time.Duration
+	bootTimeTimestampsBelow     time.Duration
 	idleTimeout                 time.Duration
 	handshakeTimeout            time.Duration
 	domainFrontingPort          int
@@ -342,11 +343,14 @@ func (p *Proxy) doFakeTLSHandshake(ctx *streamContext) bool {
 		}
 	}
 
-	result, err := fake.ReadClientHelloMulti(
+	result, err := fake.ReadClientHelloWithPolicy(
 		rewind,
 		set.keys,
 		set.hostnames,
-		p.tolerateTimeSkewness,
+		fake.TimestampPolicy{
+			TolerateTimeSkewness: p.tolerateTimeSkewness,
+			BootTimeBelow:        p.bootTimeTimestampsBelow,
+		},
 	)
 	if err != nil {
 		p.logger.InfoError("cannot read client hello", err)
@@ -372,6 +376,10 @@ func (p *Proxy) doFakeTLSHandshake(ctx *streamContext) bool {
 		p.doDomainFrontingForHost(ctx, rewind, result.MatchedHost)
 
 		return false
+	}
+
+	if result.BootTime {
+		ctx.logger.Debug("client hello has a boot-time timestamp")
 	}
 
 	matchedSecret := set.secrets[result.MatchedIndex]
@@ -734,6 +742,7 @@ func NewProxy(opts ProxyOpts) (*Proxy, error) {
 		domainFrontingPort:       opts.getDomainFrontingPort(),
 		domainFrontingHost:       opts.DomainFrontingHost,
 		tolerateTimeSkewness:     opts.getTolerateTimeSkewness(),
+		bootTimeTimestampsBelow:  opts.BootTimeTimestampsBelow,
 		idleTimeout:              opts.getIdleTimeout(),
 		handshakeTimeout:         opts.getHandshakeTimeout(),
 		serverHelloMSS:           opts.ServerHelloMSS,

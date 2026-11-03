@@ -332,7 +332,7 @@ func runProxy(
 
 	serverHelloMSS, listenerMSS := clientMSSPlan(conf, logger)
 
-	tolerateTimeSkewness := conf.TolerateTimeSkewness.Get(mtglib.DefaultTolerateTimeSkewness)
+	tolerateTimeSkewness := conf.GetTolerateTimeSkewness()
 	antiReplayCache, fakeTLSAntiReplayCache := makeAntiReplayCache(conf, tolerateTimeSkewness)
 
 	opts := mtglib.ProxyOpts{
@@ -354,6 +354,7 @@ func runProxy(
 
 		AllowFallbackOnUnknownDC: conf.AllowFallbackOnUnknownDC.Get(false),
 		TolerateTimeSkewness:     tolerateTimeSkewness,
+		BootTimeTimestampsBelow:  conf.BootTimeTimestampsBelow.Get(0),
 		IdleTimeout:              conf.Network.Timeout.Idle.Get(mtglib.DefaultIdleTimeout),
 		HandshakeTimeout:         conf.Network.Timeout.Handshake.Get(mtglib.DefaultHandshakeTimeout),
 

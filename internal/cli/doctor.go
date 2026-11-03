@@ -249,7 +249,7 @@ func (d *Doctor) checkTimeSkewness() bool {
 	}
 
 	skewness := response.ClockOffset.Abs()
-	confValue := d.conf.TolerateTimeSkewness.Get(mtglib.DefaultTolerateTimeSkewness)
+	confValue := d.conf.GetTolerateTimeSkewness()
 	diff := float64(skewness) / float64(confValue)
 	tplData := map[string]any{
 		"drift": response.ClockOffset,

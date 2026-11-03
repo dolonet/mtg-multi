@@ -56,4 +56,17 @@ exact-max-size = "8mib"
 		assert.Equal(t, 121*time.Second, exact.ReplayTTL())
 		assert.Equal(t, 8*1024*1024/antireplay.ExactEntrySize/64*64, exact.Capacity())
 	})
+
+	t.Run("exact with the default window", func(t *testing.T) {
+		conf := parseAntiReplayConfig(t, `
+[defense.anti-replay]
+enabled = true
+`)
+		_, fakeTLS := makeAntiReplayCache(conf, conf.GetTolerateTimeSkewness())
+
+		exact, ok := fakeTLS.(*antireplay.Exact)
+		require.True(t, ok)
+		assert.Equal(t, 241*time.Second, exact.ReplayTTL())
+		assert.Equal(t, antireplay.DefaultExactMaxSize/antireplay.ExactEntrySize/64*64, exact.Capacity())
+	})
 }

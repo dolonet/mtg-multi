@@ -47,6 +47,10 @@ var (
 	// forgets a ClientHello while its timestamp is still accepted.
 	ErrAntiReplayTTLTooShort = errors.New("FakeTLS anti-replay cache TTL is shorter than the timestamp window")
 
+	// ErrBootTimeTimestampsBelowTooLarge is returned if
+	// ProxyOpts.BootTimeTimestampsBelow is over BootTimeTimestampsMax.
+	ErrBootTimeTimestampsBelowTooLarge = errors.New("boot-time timestamps limit is too large")
+
 	// ErrIPBlocklistIsNotDefined is returned if you are trying to create a proxy
 	// but ip blocklist instance is not defined.
 	ErrIPBlocklistIsNotDefined = errors.New("ip blocklist is not defined")
@@ -95,7 +99,29 @@ const (
 
 	// DefaultTolerateTimeSkewness is a default timeout for time skewness on a
 	// faketls timeout verification.
+	//
+	// It is used when ProxyOpts.FakeTLSAntiReplayCache is not set: then
+	// replays are checked only by a Bloom filter (or not at all), and a short
+	// window is what limits them.
 	DefaultTolerateTimeSkewness = 3 * time.Second
+
+	// DefaultTolerateTimeSkewnessExact is the default time skewness when
+	// ProxyOpts.FakeTLSAntiReplayCache is set.
+	//
+	// The client clock is all a FakeTLS timestamp is checked against, and
+	// phones often run seconds to minutes off: with 3 seconds such a client
+	// is silently sent to the fronting host and the proxy looks dead to its
+	// user. 2 minutes is what telemt accepts. A wider window does not let
+	// replays through as long as the anti-replay cache covers it (see
+	// FakeTLSReplayTTL): a replay inside the window is caught by the cache,
+	// a later one by the timestamp check. It only costs cache memory, about
+	// 241 entries per handshake per second.
+	DefaultTolerateTimeSkewnessExact = 2 * time.Minute
+
+	// BootTimeTimestampsMax is the upper limit of
+	// ProxyOpts.BootTimeTimestampsBelow: timestamps below 7 days cannot be a
+	// real Unix time, so they are taken as a time since boot.
+	BootTimeTimestampsMax = 7 * 24 * time.Hour
 
 	// DefaultSecuredFrameTimeout is how long a connection that may be a
 	// secured ("dd") client gets to deliver its 64-byte obfuscated2 frame.
