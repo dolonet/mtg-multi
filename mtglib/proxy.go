@@ -117,7 +117,8 @@ func (p *Proxy) ServeConn(conn essentials.Conn) {
 	// released as soon as the secret is verified or the connection goes to the
 	// fronting domain, so authenticated sessions never hold it.
 	release, action, admitted := p.pendingHandshakes.acquire(
-		ctx.ClientIP(), p.pendingHandshakesPerIP, p.pendingHandshakesDryRun)
+		ctx.ClientIP(), p.pendingHandshakesPerIP, p.pendingHandshakesDryRun,
+	)
 	if action != "" {
 		p.eventStream.Send(ctx, NewEventPendingHandshakeLimit(ctx.streamID, action))
 	}

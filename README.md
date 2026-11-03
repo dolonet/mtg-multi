@@ -59,6 +59,8 @@ GET /stats
 
 `active_ips` lists the client addresses that have live sessions of the user right now, each address once however many sessions it has (`connections` counts the sessions), sorted with IPv4 first; `[]` when there are none. It is the address mtg sees as the client: the one from the PROXY protocol header with `proxy-protocol-listener`, `X-Forwarded-For` for WEB streams, otherwise the TCP peer, so clients behind a relay show up with the relay's address. An address is added when a session passes the handshake and removed with the last one, so a user removed by `SIGHUP` disappears together with its addresses.
 
+DC labels in Prometheus/StatsD preserve the sign requested by the client: media DCs are negative (`-2`, `-4`, ...). Dashboards that match only positive DC numbers must include the negative ones too.
+
 **Connection throttling.** Automatic per-user connection limits to protect the server from overload. A background goroutine recomputes caps every few seconds using a fair-share algorithm: small users keep their connections, remaining budget is split equally among heavy consumers. New connections from over-cap users are rejected; existing connections are not killed.
 
 ```toml
@@ -274,6 +276,8 @@ GET /stats
 ```
 
 `active_ips` - адреса клиентов, у которых сейчас есть живые сессии пользователя, каждый адрес один раз, сколько бы сессий с него ни было (сессии считает `connections`), IPv4 впереди; `[]`, если сессий нет. Это адрес, который mtg видит как клиента: из заголовка PROXY protocol при `proxy-protocol-listener`, из `X-Forwarded-For` для WEB-потоков, иначе TCP-адрес собеседника, так что клиенты за релеем видны с адресом релея. Адрес добавляется, когда сессия прошла рукопожатие, и уходит вместе с последней, поэтому пользователь, удалённый через `SIGHUP`, исчезает вместе со своими адресами.
+
+Метки DC в Prometheus/StatsD сохраняют знак из запроса клиента: медиа DC имеют отрицательные номера (`-2`, `-4`, ...). Фильтры дашбордов только по положительным DC должны учитывать и отрицательные.
 
 **Троттлинг подключений.** Автоматические per-user лимиты для защиты сервера от перегрузки. Фоновая горутина каждые несколько секунд пересчитывает капы по алгоритму fair-share: маленькие пользователи сохраняют свои подключения, оставшийся бюджет делится поровну между крупными потребителями. Новые подключения сверх капа отклоняются; существующие не разрываются.
 
