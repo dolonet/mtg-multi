@@ -9,7 +9,10 @@ import (
 	"net/netip"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/dolonet/mtg-multi/essentials"
+	"github.com/dolonet/mtg-multi/mtglib/obfuscation"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -336,3 +339,79 @@ type remoteAddrConn struct {
 }
 
 func (c remoteAddrConn) RemoteAddr() net.Addr { return c.remote }
+
+// staticIPList is an IP allowlist or blocklist that gives the same answer for
+// every address (the ipblocklist package cannot be imported from here).
+type staticIPList bool
+
+func (l staticIPList) Contains(net.IP) bool { return bool(l) }
+func (l staticIPList) Run(time.Duration)    {}
+func (l staticIPList) Shutdown()            {}
+
+// End to end: a real secured client goes through Serve and ServeConn over
+// loopback TCP, so the address is captured from the accepted connection and
+// released when ServeConn returns. Telegram is a local stand-in. The other
+// tests set clientAddr by hand and do not cover these lines of ServeConn.
+func TestActiveIPsThroughServeConn(t *testing.T) {
+	t.Parallel()
+
+	alice := GenerateSecret("example.com")
+	bob := GenerateSecret("example.com")
+	telegramAddr, dcs := fakeTelegram(t)
+
+	proxy, err := NewProxy(ProxyOpts{
+		Secrets:          map[string]Secret{"alice": alice, "bob": bob},
+		Network:          &dcPoolTestNetwork{addr: telegramAddr},
+		AntiReplayCache:  &mapAntiReplayCache{seen: map[string]bool{}},
+		IPBlocklist:      staticIPList(false),
+		IPAllowlist:      staticIPList(true),
+		EventStream:      &dcPoolTestEvents{},
+		Logger:           NoopLogger{},
+		HandshakeTimeout: 10 * time.Second,
+		SecuredEnabled:   true,
+	})
+	require.NoError(t, err)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	served := make(chan struct{})
+
+	go func() {
+		defer close(served)
+
+		proxy.Serve(listener) //nolint: errcheck
+	}()
+
+	t.Cleanup(func() {
+		listener.Close() //nolint: errcheck
+		<-served
+		proxy.Shutdown()
+	})
+
+	client, err := net.Dial("tcp", listener.Addr().String())
+	require.NoError(t, err)
+
+	defer client.Close() //nolint: errcheck
+
+	_, err = obfuscation.Obfuscator{Secret: alice.Key[:]}.SendHandshake(essentials.WrapNetConn(client), 2)
+	require.NoError(t, err)
+
+	// Telegram gets the handshake only after the session is tracked, and the
+	// session lasts until the client goes away.
+	expectHandshakeDC(t, dcs, 2)
+
+	assert.Equal(t, []string{"127.0.0.1"}, readActiveIPs(t, proxy.stats, "alice"))
+	assert.Empty(t, readActiveIPs(t, proxy.stats, "bob"))
+	assert.EqualValues(t, 1, proxy.stats.lookup("alice").connections.Load())
+
+	require.NoError(t, client.Close())
+
+	// endSession drops the address and then the connection, so wait for both.
+	require.Eventually(t, func() bool {
+		st := proxy.stats.lookup("alice")
+
+		return len(st.activeIPs()) == 0 && st.connections.Load() == 0
+	}, 5*time.Second, 10*time.Millisecond, "the session is still listed after the client went away")
+	assert.Empty(t, readActiveIPs(t, proxy.stats, "alice"))
+}
