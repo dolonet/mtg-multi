@@ -357,7 +357,7 @@ func (p *Proxy) doFakeTLSHandshake(ctx *streamContext) bool {
 		return false
 	}
 
-	if p.antiReplayCache.SeenBefore(result.Hello.SessionID) {
+	if p.isFakeTLSReplay(result.Hello) {
 		p.logger.Warning("replay attack has been detected!")
 		p.eventStream.Send(p.ctx, NewEventReplayAttack(ctx.streamID))
 		p.doDomainFrontingForHost(ctx, rewind, result.MatchedHost)
@@ -419,6 +419,18 @@ func isFakeTLSHandshake(firstBytes [5]byte) bool {
 	return firstBytes[0] == tls.TypeHandshake &&
 		firstBytes[1] == 3 &&
 		firstBytes[2] == 1
+}
+
+// isFakeTLSReplay reports whether this FakeTLS ClientHello was seen before.
+//
+// The key is the client random. It is the HMAC of the whole ClientHello
+// (with the timestamp mixed in), so it is authenticated, a replayed hello has
+// the same one, and distinct valid hellos have distinct ones. The session ID
+// is chosen by the client and two different valid hellos can share it (an
+// empty one, for example); keyed by it, the second of them was rejected as a
+// replay.
+func (p *Proxy) isFakeTLSReplay(hello *fake.ClientHello) bool {
+	return p.antiReplayCache.SeenBefore(hello.Random[:])
 }
 
 // doSecuredHandshake handles a secured ("dd") client: plain obfuscated2
