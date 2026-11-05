@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 
 	"github.com/dolonet/mtg-multi/essentials"
 )
@@ -38,8 +39,14 @@ func pump(log Logger, src, dst essentials.Conn, direction string) {
 	buf := acquireBuffer()
 	defer releaseBuffer(buf)
 
-	defer src.CloseRead()  //nolint: errcheck
-	defer dst.CloseWrite() //nolint: errcheck
+	defer src.CloseRead() //nolint: errcheck
+	defer func() {
+		// A failed CloseWrite can mean that data accepted by Write was
+		// never delivered (e.g. a FakeTLS tail that could not be flushed).
+		if err := dst.CloseWrite(); err != nil && !errors.Is(err, net.ErrClosed) {
+			log.Printf("%s: cannot close write side: %v", direction, err)
+		}
+	}()
 
 	n, err := io.CopyBuffer(src, dst, *buf)
 
