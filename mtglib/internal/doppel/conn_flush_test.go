@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
 	"testing"
 	"time"
 
@@ -179,4 +180,172 @@ func TestConnCloseWriteReportsFlushTimeout(t *testing.T) {
 
 	// Later calls report the same result.
 	assert.ErrorIs(t, c.Close(), ErrFlushTimeout)
+}
+
+// failingWriteConn fails every write to the network.
+type failingWriteConn struct {
+	essentials.Conn
+
+	err error
+}
+
+func (c failingWriteConn) Write([]byte) (int, error) {
+	return 0, c.err
+}
+
+func TestConnCloseReportsFailedLastRecord(t *testing.T) {
+	sendErr := errors.New("network write failed")
+
+	for _, closeFn := range []struct {
+		name string
+		fn   func(Conn) error
+	}{
+		{"Close", Conn.Close},
+		{"CloseWrite", Conn.CloseWrite},
+	} {
+		t.Run(closeFn.name, func(t *testing.T) {
+			local, remote := net.Pipe()
+			t.Cleanup(func() {
+				local.Close()  //nolint: errcheck
+				remote.Close() //nolint: errcheck
+			})
+
+			underlying := failingWriteConn{Conn: essentials.WrapNetConn(local), err: sendErr}
+			c := NewConn(context.Background(), underlying, Stats{k: 2.0, lambda: 0.01})
+			t.Cleanup(c.Stop)
+
+			n, err := c.Write(randomBytes(t, 13))
+			require.NoError(t, err)
+			require.Equal(t, 13, n)
+
+			// The only record has left the queue and its write failed.
+			select {
+			case <-c.p.senderDone:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the sender did not exit after the failed write")
+			}
+
+			assert.ErrorIs(t, closeFn.fn(c), sendErr)
+
+			// Later calls report the same error.
+			assert.ErrorIs(t, c.CloseWrite(), sendErr)
+			assert.ErrorIs(t, c.Close(), sendErr)
+		})
+	}
+}
+
+func TestConnWriteRespectsWriteDeadlineWhileQueueIsFull(t *testing.T) {
+	// The sender waits about 10 s before every record, so the queue stays
+	// full and only the write deadline can release Write.
+	slowPacing := Stats{k: 100.0, lambda: 10_000}
+
+	type result struct {
+		n   int
+		err error
+	}
+
+	newBlockedConn := func(t *testing.T) Conn {
+		t.Helper()
+
+		local, remote := net.Pipe()
+		t.Cleanup(func() {
+			local.Close()  //nolint: errcheck
+			remote.Close() //nolint: errcheck
+		})
+
+		go io.Copy(io.Discard, remote) //nolint: errcheck
+
+		c := NewConn(context.Background(), essentials.WrapNetConn(local), slowPacing)
+		t.Cleanup(c.Stop)
+
+		return c
+	}
+
+	write := func(c Conn, payload []byte) <-chan result {
+		done := make(chan result, 1)
+
+		go func() {
+			n, err := c.Write(payload)
+			done <- result{n, err}
+		}()
+
+		return done
+	}
+
+	assertDeadlineExceeded := func(t *testing.T, done <-chan result, within time.Duration) {
+		t.Helper()
+
+		select {
+		case r := <-done:
+			require.ErrorIs(t, r.err, os.ErrDeadlineExceeded)
+
+			var netErr net.Error
+			require.ErrorAs(t, r.err, &netErr)
+			assert.True(t, netErr.Timeout())
+			assert.Equal(t, ConnMaxBufferedBytes, r.n, "Write reports the bytes it queued")
+		case <-time.After(within):
+			t.Fatalf("Write is still blocked after %v", within)
+		}
+	}
+
+	t.Run("deadline set before Write", func(t *testing.T) {
+		c := newBlockedConn(t)
+		require.NoError(t, c.SetWriteDeadline(time.Now().Add(30*time.Millisecond)))
+
+		done := write(c, randomBytes(t, 2*ConnMaxBufferedBytes))
+		assertDeadlineExceeded(t, done, 300*time.Millisecond)
+	})
+
+	t.Run("deadline set by SetDeadline", func(t *testing.T) {
+		c := newBlockedConn(t)
+		require.NoError(t, c.SetDeadline(time.Now().Add(30*time.Millisecond)))
+
+		done := write(c, randomBytes(t, 2*ConnMaxBufferedBytes))
+		assertDeadlineExceeded(t, done, 300*time.Millisecond)
+	})
+
+	t.Run("deadline shortened while Write waits", func(t *testing.T) {
+		c := newBlockedConn(t)
+		require.NoError(t, c.SetWriteDeadline(time.Now().Add(time.Hour)))
+
+		done := write(c, randomBytes(t, 2*ConnMaxBufferedBytes))
+
+		select {
+		case <-done:
+			t.Fatal("Write returned before the deadline")
+		case <-time.After(50 * time.Millisecond):
+		}
+
+		require.NoError(t, c.SetWriteDeadline(time.Now().Add(30*time.Millisecond)))
+		assertDeadlineExceeded(t, done, 300*time.Millisecond)
+	})
+
+	t.Run("deadline already passed", func(t *testing.T) {
+		c := newBlockedConn(t)
+
+		done := write(c, randomBytes(t, 2*ConnMaxBufferedBytes))
+
+		select {
+		case <-done:
+			t.Fatal("Write returned without a deadline")
+		case <-time.After(50 * time.Millisecond):
+		}
+
+		require.NoError(t, c.SetWriteDeadline(time.Now().Add(-time.Second)))
+		assertDeadlineExceeded(t, done, 300*time.Millisecond)
+	})
+
+	t.Run("cleared deadline keeps Write waiting", func(t *testing.T) {
+		c := newBlockedConn(t)
+		require.NoError(t, c.SetWriteDeadline(time.Now().Add(30*time.Millisecond)))
+		require.NoError(t, c.SetWriteDeadline(time.Time{}))
+
+		done := write(c, randomBytes(t, 2*ConnMaxBufferedBytes))
+
+		select {
+		case r := <-done:
+			t.Fatalf("Write returned after the deadline was cleared: %d, %v", r.n, r.err)
+		case <-time.After(200 * time.Millisecond):
+		}
+	})
 }
