@@ -136,6 +136,77 @@ type ProxyStats struct {
 
 	// secretsDigest is the fingerprint of the secret set (see secretSet.digest).
 	secretsDigest atomic.Value // string
+
+	// reload is the outcome of configuration reloads (SIGHUP), nil until the
+	// first one.
+	reloadMu sync.Mutex
+	reload   *ReloadJSON
+}
+
+// Stages a configuration reload can fail on, as reported in /stats.
+const (
+	// ReloadStageReadConfig: the configuration file could not be read or
+	// parsed.
+	ReloadStageReadConfig = "read_config"
+	// ReloadStageApply: the configuration was read, but its secrets were
+	// refused.
+	ReloadStageApply = "apply"
+)
+
+// RecordReloadSuccess records a reload whose secrets have been applied.
+func (s *ProxyStats) RecordReloadSuccess(update SecretsUpdate) {
+	s.reloadMu.Lock()
+	defer s.reloadMu.Unlock()
+
+	now := time.Now()
+	r := s.reloadOrNew()
+	r.Succeeded++
+	r.LastAt = now
+	r.LastOK = true
+	r.LastErrorStage = ""
+	r.LastSuccessAt = &now
+	r.Added = update.Added
+	r.Removed = update.Removed
+	r.Changed = update.Changed
+}
+
+// RecordReloadFailure records a reload that has been refused at the given
+// stage (ReloadStageReadConfig or ReloadStageApply). The proxy keeps running
+// on its current secrets, so the counts of the last successful reload stay.
+func (s *ProxyStats) RecordReloadFailure(stage string) {
+	s.reloadMu.Lock()
+	defer s.reloadMu.Unlock()
+
+	r := s.reloadOrNew()
+	r.Failed++
+	r.LastAt = time.Now()
+	r.LastOK = false
+	r.LastErrorStage = stage
+}
+
+func (s *ProxyStats) reloadOrNew() *ReloadJSON {
+	if s.reload == nil {
+		s.reload = &ReloadJSON{}
+	}
+
+	return s.reload
+}
+
+func (s *ProxyStats) reloadSnapshot() *ReloadJSON {
+	s.reloadMu.Lock()
+	defer s.reloadMu.Unlock()
+
+	if s.reload == nil {
+		return nil
+	}
+
+	r := *s.reload
+	if r.LastSuccessAt != nil {
+		at := *r.LastSuccessAt
+		r.LastSuccessAt = &at
+	}
+
+	return &r
 }
 
 // NewProxyStats creates a new ProxyStats instance.
@@ -370,6 +441,31 @@ type StatsResponse struct {
 	// SecretsSHA256 is sha256 of "name=secret(hex)" lines sorted by name and
 	// joined with \n. It changes on every applied key change, not only names.
 	SecretsSHA256 string `json:"secrets_sha256,omitempty"`
+	// Reload is the outcome of configuration reloads (SIGHUP); omitted until
+	// the first one.
+	Reload *ReloadJSON `json:"reload,omitempty"`
+}
+
+// ReloadJSON is the reload portion of the stats JSON response. A refused
+// reload keeps the current secrets, so secrets_sha256 alone cannot tell
+// "refused" from "not reloaded yet"; last_ok and last_error_stage can. The
+// error text itself is not exposed: a parse error may quote a line of the
+// configuration, secrets included. It is in the log.
+type ReloadJSON struct {
+	// Succeeded and Failed count reloads since the start.
+	Succeeded int64 `json:"succeeded"`
+	Failed    int64 `json:"failed"`
+	// LastAt is the time of the last reload, successful or not.
+	LastAt time.Time `json:"last_at"`
+	LastOK bool      `json:"last_ok"`
+	// LastErrorStage is "read_config" or "apply" when the last reload has
+	// been refused.
+	LastErrorStage string `json:"last_error_stage,omitempty"`
+	// LastSuccessAt and the counts below describe the last successful reload.
+	LastSuccessAt *time.Time `json:"last_success_at,omitempty"`
+	Added         int        `json:"added"`
+	Removed       int        `json:"removed"`
+	Changed       int        `json:"changed"`
 }
 
 // ThrottleJSON is the throttle portion of the stats JSON response.
@@ -450,6 +546,8 @@ func (s *ProxyStats) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if digest, ok := s.secretsDigest.Load().(string); ok {
 		resp.SecretsSHA256 = digest
 	}
+
+	resp.Reload = s.reloadSnapshot()
 
 	w.Header().Set("Content-Type", "application/json")
 

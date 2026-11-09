@@ -58,3 +58,17 @@ func webSecrets(secrets map[string]mtglib.Secret) map[string][]byte {
 
 	return out
 }
+
+// RecordReloadSuccess and RecordReloadFailure pass the outcome on to the
+// proxy, so /stats reports reloads in the WEB mode as well.
+func (r reloadWithWeb) RecordReloadSuccess(update mtglib.SecretsUpdate) {
+	if rec, ok := r.proxy.(reloadRecorder); ok {
+		rec.RecordReloadSuccess(update)
+	}
+}
+
+func (r reloadWithWeb) RecordReloadFailure(stage string) {
+	if rec, ok := r.proxy.(reloadRecorder); ok {
+		rec.RecordReloadFailure(stage)
+	}
+}

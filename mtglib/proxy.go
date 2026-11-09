@@ -827,6 +827,16 @@ func (p *Proxy) trackSession(ctx *streamContext) bool {
 	return true
 }
 
+// RecordReloadSuccess publishes a successful configuration reload in /stats.
+func (p *Proxy) RecordReloadSuccess(update SecretsUpdate) {
+	p.stats.RecordReloadSuccess(update)
+}
+
+// RecordReloadFailure publishes a refused configuration reload in /stats.
+func (p *Proxy) RecordReloadFailure(stage string) {
+	p.stats.RecordReloadFailure(stage)
+}
+
 // UpdateSecrets replaces the set of secrets without restarting the proxy.
 //
 // New handshakes use the new set right away. Live sessions of secrets that

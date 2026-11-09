@@ -59,6 +59,24 @@ GET /stats
 
 `active_ips` lists the client addresses that have live sessions of the user right now, each address once however many sessions it has (`connections` counts the sessions), sorted with IPv4 first; `[]` when there are none. It is the address mtg sees as the client: the one from the PROXY protocol header with `proxy-protocol-listener`, `X-Forwarded-For` for WEB streams, otherwise the TCP peer, so clients behind a relay show up with the relay's address. An address is added when a session passes the handshake and removed with the last one, so a user removed by `SIGHUP` disappears together with its addresses.
 
+After the first `SIGHUP` the response also has a `reload` object with the outcome of reloads since the start:
+
+```json
+"reload": {
+  "succeeded": 12,
+  "failed": 1,
+  "last_at": "2026-03-29T11:20:00Z",
+  "last_ok": false,
+  "last_error_stage": "read_config",
+  "last_success_at": "2026-03-29T11:10:00Z",
+  "added": 1,
+  "removed": 0,
+  "changed": 2
+}
+```
+
+A refused reload keeps the current secrets, so `secrets_sha256` alone cannot tell "refused" from "not reloaded yet": `last_ok` can. `last_error_stage` is `read_config` (the file cannot be read or parsed) or `apply` (the secrets are refused). The error text itself is only in the log: a parse error may quote a line of the config, secrets included. `added`, `removed` and `changed` are the counts of the last successful reload. Without any `SIGHUP` there is no `reload` field.
+
 DC labels in Prometheus/StatsD preserve the sign requested by the client: media DCs are negative (`-2`, `-4`, ...). Dashboards that match only positive DC numbers must include the negative ones too.
 
 **Connection throttling.** Automatic per-user connection limits to protect the server from overload. A background goroutine recomputes caps every few seconds using a fair-share algorithm: small users keep their connections, remaining budget is split equally among heavy consumers. New connections from over-cap users are rejected; existing connections are not killed.
@@ -276,6 +294,24 @@ GET /stats
 ```
 
 `active_ips` - адреса клиентов, у которых сейчас есть живые сессии пользователя, каждый адрес один раз, сколько бы сессий с него ни было (сессии считает `connections`), IPv4 впереди; `[]`, если сессий нет. Это адрес, который mtg видит как клиента: из заголовка PROXY protocol при `proxy-protocol-listener`, из `X-Forwarded-For` для WEB-потоков, иначе TCP-адрес собеседника, так что клиенты за релеем видны с адресом релея. Адрес добавляется, когда сессия прошла рукопожатие, и уходит вместе с последней, поэтому пользователь, удалённый через `SIGHUP`, исчезает вместе со своими адресами.
+
+После первого `SIGHUP` в ответе появляется объект `reload` с итогом перезагрузок с момента старта:
+
+```json
+"reload": {
+  "succeeded": 12,
+  "failed": 1,
+  "last_at": "2026-03-29T11:20:00Z",
+  "last_ok": false,
+  "last_error_stage": "read_config",
+  "last_success_at": "2026-03-29T11:10:00Z",
+  "added": 1,
+  "removed": 0,
+  "changed": 2
+}
+```
+
+Отвергнутая перезагрузка оставляет текущие секреты, поэтому по одному `secrets_sha256` не отличить «отвергнута» от «ещё не перечитана» - это видно по `last_ok`. `last_error_stage` - `read_config` (файл не читается или не разбирается) или `apply` (секреты не приняты). Текст ошибки - только в логе: ошибка разбора может процитировать строку конфига вместе с секретом. `added`, `removed` и `changed` - числа последней успешной перезагрузки. Без `SIGHUP` поля `reload` нет.
 
 Метки DC в Prometheus/StatsD сохраняют знак из запроса клиента: медиа DC имеют отрицательные номера (`-2`, `-4`, ...). Фильтры дашбордов только по положительным DC должны учитывать и отрицательные.
 

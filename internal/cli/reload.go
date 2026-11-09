@@ -21,6 +21,14 @@ type secretsUpdater interface {
 	UpdateSecrets(secrets map[string]mtglib.Secret) (mtglib.SecretsUpdate, error)
 }
 
+// reloadRecorder is implemented by an updater that publishes the outcome of
+// reloads (*mtglib.Proxy, in /stats). A refused reload keeps the current
+// secrets, and without this an external sync only sees "nothing changed".
+type reloadRecorder interface {
+	RecordReloadSuccess(update mtglib.SecretsUpdate)
+	RecordReloadFailure(stage string)
+}
+
 // hostResolver is the part of *net.Resolver used to check new hostnames. It
 // is an interface so that tests do not need a network.
 type hostResolver interface {
@@ -35,9 +43,15 @@ func reloadSecrets(
 	proxy secretsUpdater,
 	logger mtglib.Logger,
 ) (map[string]mtglib.Secret, error) {
+	recorder, _ := proxy.(reloadRecorder)
+
 	conf, err := readConfig()
 	if err != nil {
 		logger.WarningError("reload: cannot read config, keeping current secrets", err)
+
+		if recorder != nil {
+			recorder.RecordReloadFailure(mtglib.ReloadStageReadConfig)
+		}
 
 		return nil, err
 	}
@@ -48,7 +62,15 @@ func reloadSecrets(
 	if err != nil {
 		logger.WarningError("reload: cannot apply secrets, keeping current secrets", err)
 
+		if recorder != nil {
+			recorder.RecordReloadFailure(mtglib.ReloadStageApply)
+		}
+
 		return nil, fmt.Errorf("cannot apply secrets: %w", err)
+	}
+
+	if recorder != nil {
+		recorder.RecordReloadSuccess(update)
 	}
 
 	logger.
