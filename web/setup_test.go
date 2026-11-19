@@ -82,3 +82,71 @@ func TestBuildProfilesUsesSameSecrets(t *testing.T) {
 	assert.Equal(t, "alice", profiles[0].User)
 	assert.Equal(t, expected, profiles[0].Capability)
 }
+
+// A user served under an extra FakeTLS domain while old links still carry the
+// previous one is listed twice: "alice" and "alice~sni1" with identical key
+// bytes. For WEB they are one user (the capability depends only on the key and
+// the vhost), so the alias is skipped and the profile stays under "alice"
+// instead of the whole mode refusing to start.
+func TestBuildProfilesSkipsAliasWithSameKey(t *testing.T) {
+	shared := []byte("0123456789abcdef")
+	other := []byte("fedcba9876543210")
+
+	profiles, err := web.BuildProfiles(map[string][]byte{
+		"alice~sni1": shared,
+		"alice":      shared,
+		"bob":        other,
+	}, setupHost, web.SecretModeDD)
+	require.NoError(t, err)
+	require.Len(t, profiles, 2)
+
+	users := []string{profiles[0].User, profiles[1].User}
+	assert.ElementsMatch(t, []string{"alice", "bob"}, users)
+
+	table, err := web.NewProfileTable(profiles)
+	require.NoError(t, err)
+	assert.Equal(t, 2, table.Len())
+}
+
+// Only a real alias is skipped: "<user>~..." with a different key is its own
+// user, and so is a "~" name without its base user in the config.
+func TestBuildProfilesKeepsNonAliases(t *testing.T) {
+	profiles, err := web.BuildProfiles(map[string][]byte{
+		"alice":      []byte("0123456789abcdef"),
+		"alice~sni1": []byte("fedcba9876543210"),
+		"carol~sni1": []byte("aaaaaaaaaaaaaaaa"),
+	}, setupHost, web.SecretModeDD)
+	require.NoError(t, err)
+
+	users := make([]string, 0, len(profiles))
+	for _, profile := range profiles {
+		users = append(users, profile.User)
+	}
+
+	assert.ElementsMatch(t, []string{"alice", "alice~sni1", "carol~sni1"}, users)
+}
+
+// Two unrelated names with one key are still indistinguishable twins: rejected.
+func TestSetupStillRejectsTwinsWithSameKey(t *testing.T) {
+	shared := []byte("0123456789abcdef")
+
+	_, _, err := web.Setup(web.Settings{
+		BindTo:   "127.0.0.1:0",
+		Host:     setupHost,
+		DecoyDir: t.TempDir(),
+	}, map[string][]byte{"alice": shared, "twin": shared}, func(*web.Stream) {})
+	require.Error(t, err)
+}
+
+// Setup with aliases sharing one key starts the WEB mode instead of failing.
+func TestSetupAcceptsSharedSecretAliases(t *testing.T) {
+	shared := []byte("0123456789abcdef")
+
+	server, _, err := web.Setup(web.Settings{
+		BindTo:   "127.0.0.1:0",
+		Host:     setupHost,
+		DecoyDir: t.TempDir(),
+	}, map[string][]byte{"alice": shared, "alice~sni1": shared}, func(*web.Stream) {})
+	require.NoError(t, err)
+	require.NotNil(t, server)
+}
