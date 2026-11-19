@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"errors"
 	"net"
 	"strings"
@@ -48,10 +49,21 @@ var (
 // The secrets are the same as for regular MTProto: the user is the same, only
 // the transport differs. The WEB mode needs neither separate provisioning nor
 // its own user table, just a different link.
+//
+// An alias is skipped: a name of the form "<user>~<anything>" whose key is
+// byte for byte the key of "<user>". Such entries serve the same user under an
+// extra FakeTLS domain while old links still carry the previous one; for WEB
+// the capability depends only on the key, so they are the same user and the
+// profile stays under "<user>". Any other pair of names with one key is still
+// rejected by NewProfileTable.
 func BuildProfiles(secrets map[string][]byte, host string, mode SecretMode) ([]Profile, error) {
 	profiles := make([]Profile, 0, len(secrets))
 
 	for user, secret := range secrets {
+		if isAliasOf(secrets, user, secret) {
+			continue
+		}
+
 		capability, err := DeriveCapability(ClientSecret(secret, mode), host)
 		if err != nil {
 			return nil, err
@@ -61,6 +73,19 @@ func BuildProfiles(secrets map[string][]byte, host string, mode SecretMode) ([]P
 	}
 
 	return profiles, nil
+}
+
+// isAliasOf reports whether user is "<base>~<suffix>" and secrets holds base
+// with exactly the same key.
+func isAliasOf(secrets map[string][]byte, user string, secret []byte) bool {
+	base, _, ok := strings.Cut(user, "~")
+	if !ok || base == "" {
+		return false
+	}
+
+	baseSecret, ok := secrets[base]
+
+	return ok && bytes.Equal(baseSecret, secret)
 }
 
 // Setup builds the HTTP entry from settings. It returns (nil, "", nil) when
